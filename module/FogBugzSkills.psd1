@@ -11,10 +11,19 @@
         'Find-FogBugzCase'
         'Get-FogBugzCaseScore'
         'Get-FogBugzRankedCase'
+        'Initialize-FogBugzSession'
         'Resolve-FogBugzFilter'
         'Select-FogBugzCase'
     )
-    AliasesToExport   = @()
+    AliasesToExport   = @(
+        'fblogin'
+        'fbconnect'
+        'fbpick'
+        'fbscore'
+        'fbrank'
+        'fbfilter'
+        'fbselect'
+    )
     CmdletsToExport   = @()
     VariablesToExport = @()
 }

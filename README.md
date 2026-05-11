@@ -35,6 +35,27 @@ The first implemented slice is a PowerShell module that can:
 
 Import `module/FogBugzSkills.psd1` to use it locally.
 
+## Real-world workflow (current)
+
+1. Run pre-auth once in the working directory:
+   `fblogin` (alias for `Initialize-FogBugzSession`).
+2. Enter tenant URI and credentials at the secure local prompt.
+3. Run case picker:
+   `Find-FogBugzCase -FilterName "<your filter>" -Interactive`
+
+The tenant context and session token are cached per working directory for later non-interactive module usage.
+
+The companion skill scaffold lives at `skills/fogbugz-pick-case/SKILL.md`.
+
+Short aliases are available:
+- `fblogin` -> `Initialize-FogBugzSession`
+- `fbconnect` -> `Connect-FogBugzSession`
+- `fbpick` -> `Find-FogBugzCase`
+- `fbscore` -> `Get-FogBugzCaseScore`
+- `fbrank` -> `Get-FogBugzRankedCase`
+- `fbfilter` -> `Resolve-FogBugzFilter`
+- `fbselect` -> `Select-FogBugzCase`
+
 ## Governance
 
 Repository rules for Copilot agents live in `.github/copilot-instructions.md`.
