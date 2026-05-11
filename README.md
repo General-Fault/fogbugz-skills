@@ -46,6 +46,7 @@ Import `module/FogBugzSkills.psd1` to use it locally.
 The tenant context and session token are cached per working directory for later non-interactive module usage.
 When a case is selected interactively, the module now loads case comments/events and attachment metadata into the returned case context.
 You can also load details directly by case number with `Get-FogBugzCaseDetails` / `fbcase 14630`.
+The current selected case is stored per working directory, so `fbcomment` can reuse the last picked or loaded case without retyping the case number.
 
 The companion skill scaffold lives at `skills/fogbugz-pick-case/SKILL.md`.
 
@@ -53,6 +54,7 @@ Short aliases are available:
 - `fblogin` -> `Initialize-FogBugzSession`
 - `fbconnect` -> `Connect-FogBugzSession`
 - `fbpick` -> `Find-FogBugzCase`
+- `fbcomment` -> `Add-FogBugzCaseComment`
 - `fbcase` -> `Get-FogBugzCaseDetails`
 - `fbscore` -> `Get-FogBugzCaseScore`
 - `fbrank` -> `Get-FogBugzRankedCase`

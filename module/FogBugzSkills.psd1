@@ -7,6 +7,7 @@
     Copyright         = '(c) ConceptGenesis. All rights reserved.'
     PowerShellVersion = '5.1'
     FunctionsToExport = @(
+        'Add-FogBugzCaseComment'
         'Connect-FogBugzSession'
         'Find-FogBugzCase'
         'Get-FogBugzCaseDetails'
@@ -20,6 +21,7 @@
         'fblogin'
         'fbconnect'
         'fbpick'
+        'fbcomment'
         'fbcase'
         'fbscore'
         'fbrank'

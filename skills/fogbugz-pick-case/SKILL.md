@@ -22,6 +22,7 @@ Use this skill to select the next FogBugz case for the active work queue.
    - Do not replace it with a generic “which number” prompt unless shell interactivity is unavailable.
 4. After selection, ensure case details are loaded by case number:
    `fbcase <selected case id>`
+   - This also stores the selected case for later `fbcomment` use in the same working directory.
 5. Return selected case details clearly:
    - case id
    - title
@@ -35,6 +36,7 @@ Use this skill to select the next FogBugz case for the active work queue.
 - If filter resolution is ambiguous, show the suggestions and ask for a narrower name.
 - If no cases match, say that explicitly and suggest validating filter membership in FogBugz.
 - After case selection, use loaded comment and attachment context when summarizing the case.
+- The selected case is persisted per working directory and can be reused by `fbcomment`.
 - If you must ask for a choice in chat, each option must include details in this format:
   `<case id> — <title> (score <n>; <explanation>)`
 - Never present numeric-only options like `1`, `2`, `3` without case details.

@@ -169,6 +169,7 @@ Describe 'FogBugzSkills' {
                 fblogin   = 'Initialize-FogBugzSession'
                 fbconnect = 'Connect-FogBugzSession'
                 fbpick    = 'Find-FogBugzCase'
+                fbcomment = 'Add-FogBugzCaseComment'
                 fbcase    = 'Get-FogBugzCaseDetails'
                 fbscore   = 'Get-FogBugzCaseScore'
                 fbrank    = 'Get-FogBugzRankedCase'
@@ -293,6 +294,7 @@ Describe 'FogBugzSkills' {
 </response>
 '@
                 }
+                Mock Set-FogBugzSelectedCase { }
 
                 $session = [pscustomobject]@{ BaseUri = 'https://yourtenant.fogbugz.com'; Token = 'abc' }
                 $context = Get-FogBugzCaseDetails -Session $session -CaseNumber '14630'
@@ -311,11 +313,37 @@ Describe 'FogBugzSkills' {
                 Mock Invoke-FogBugzApi {
                     [xml]'<response><cases><case><ixBug>14630</ixBug><sTitle>Case from lookup</sTitle></case></cases></response>'
                 }
+                Mock Set-FogBugzSelectedCase { }
 
                 $context = Get-FogBugzCaseDetails -CaseNumber '14630'
                 $context.Id | Should -Be '14630'
                 $context.Title | Should -Be 'Case from lookup'
                 Should -Invoke Connect-FogBugzSession -Times 1
+            }
+        }
+
+        It 'stores the selected case when case details are loaded' {
+            InModuleScope FogBugzSkills -Parameters @{ WorkDir = $script:WorkDir } {
+                param($WorkDir)
+
+                Mock Invoke-FogBugzApi -ParameterFilter { $Command -eq 'logon' } {
+                    [xml]'<response><token>token-123</token></response>'
+                }
+                Mock Invoke-FogBugzApi -ParameterFilter { $Command -eq 'search' } {
+                    [xml]'<response><cases><case><ixBug>14630</ixBug><sTitle>Case from lookup</sTitle></case></cases></response>'
+                }
+
+                $cred = [pscredential]::new(
+                    'dummy.user@example.com',
+                    (ConvertTo-SecureString -String 'DummyPassword123!' -AsPlainText -Force)
+                )
+
+                $session = Initialize-FogBugzSession -BaseUri 'https://yourtenant.fogbugz.com' -WorkingDirectory $WorkDir -Credential $cred
+                [void](Get-FogBugzCaseDetails -Session $session -CaseNumber '14630' -WorkingDirectory $WorkDir)
+
+                $selected = Get-FogBugzSelectedCase -WorkingDirectory $WorkDir
+                $selected.Id | Should -Be '14630'
+                $selected.Title | Should -Be 'Case from lookup'
             }
         }
 
@@ -327,6 +355,7 @@ Describe 'FogBugzSkills' {
                 Mock Invoke-FogBugzApi {
                     [xml]'<response><cases><case><ixBug>14630</ixBug><sTitle>Positional call</sTitle></case></cases></response>'
                 }
+                Mock Set-FogBugzSelectedCase { }
 
                 $context = Get-FogBugzCaseDetails '14630'
                 $context.Id | Should -Be '14630'
@@ -355,6 +384,84 @@ Describe 'FogBugzSkills' {
                 $result = Find-FogBugzCase -FilterName 'Any Filter' -Interactive
                 $result.ContextSummary | Should -Be 'Loaded 0 comments and 0 attachments.'
                 Should -Invoke Get-FogBugzCaseDetails -Times 1
+            }
+        }
+
+        It 'resolves directory attachments non-recursively and skips hidden files' {
+            InModuleScope FogBugzSkills {
+                $root = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
+                $dir = Join-Path $root 'attachments'
+                $nested = Join-Path $dir 'nested'
+                New-Item -ItemType Directory -Path $nested -Force | Out-Null
+
+                $visible = Join-Path $dir 'visible.txt'
+                $hidden = Join-Path $dir 'hidden.txt'
+                $nestedFile = Join-Path $nested 'nested.txt'
+
+                Set-Content -LiteralPath $visible -Value 'visible'
+                Set-Content -LiteralPath $hidden -Value 'hidden'
+                Set-Content -LiteralPath $nestedFile -Value 'nested'
+                [IO.File]::SetAttributes($hidden, [IO.FileAttributes]::Hidden)
+
+                Mock Write-Warning { }
+
+                $files = Resolve-FogBugzAttachmentPath -AttachmentPath $dir
+                @($files).Count | Should -Be 1
+                @($files)[0].Name | Should -Be 'visible.txt'
+                Should -Invoke Write-Warning -Times 2
+
+                Remove-Item -LiteralPath $root -Recurse -Force
+            }
+        }
+
+        It 'uses the selected case when no case number is supplied' {
+            InModuleScope FogBugzSkills -Parameters @{ WorkDir = $script:WorkDir } {
+                param($WorkDir)
+
+                Mock Invoke-FogBugzApi -ParameterFilter { $Command -eq 'logon' } {
+                    [xml]'<response><token>token-123</token></response>'
+                }
+                Mock Invoke-FogBugzMultipartApi {
+                    [xml]'<response><ok>true</ok></response>'
+                }
+
+                $cred = [pscredential]::new(
+                    'dummy.user@example.com',
+                    (ConvertTo-SecureString -String 'DummyPassword123!' -AsPlainText -Force)
+                )
+
+                $session = Initialize-FogBugzSession -BaseUri 'https://yourtenant.fogbugz.com' -WorkingDirectory $WorkDir -Credential $cred
+                Set-FogBugzSelectedCase -WorkingDirectory $WorkDir -Case ([pscustomobject]@{ Id = '14630'; Title = 'Selected case' })
+
+                $result = Add-FogBugzCaseComment 'Selected case note' -Session $session -WorkingDirectory $WorkDir -Confirm:$false
+                $result.CaseNumber | Should -Be '14630'
+                $result.AttachmentCount | Should -Be 0
+                Should -Invoke Invoke-FogBugzMultipartApi -ParameterFilter { $Command -eq 'edit' -and $Parameter.ixBug -eq '14630' -and $Parameter.sEvent -eq 'Selected case note' -and $File.Count -eq 0 } -Times 1
+            }
+        }
+
+        It 'aborts before posting when an attachment path is missing' {
+            InModuleScope FogBugzSkills -Parameters @{ WorkDir = $script:WorkDir } {
+                param($WorkDir)
+
+                Mock Invoke-FogBugzApi -ParameterFilter { $Command -eq 'logon' } {
+                    [xml]'<response><token>token-123</token></response>'
+                }
+                Mock Invoke-FogBugzMultipartApi {
+                    [xml]'<response><ok>true</ok></response>'
+                }
+
+                $cred = [pscredential]::new(
+                    'dummy.user@example.com',
+                    (ConvertTo-SecureString -String 'DummyPassword123!' -AsPlainText -Force)
+                )
+
+                $session = Initialize-FogBugzSession -BaseUri 'https://yourtenant.fogbugz.com' -WorkingDirectory $WorkDir -Credential $cred
+                Set-FogBugzSelectedCase -WorkingDirectory $WorkDir -Case ([pscustomobject]@{ Id = '14630'; Title = 'Selected case' })
+
+                $missing = Join-Path $WorkDir 'missing.log'
+                { Add-FogBugzCaseComment 'Selected case note' -Session $session -WorkingDirectory $WorkDir -AttachmentPath @($missing) -Confirm:$false } | Should -Throw
+                Should -Invoke Invoke-FogBugzMultipartApi -Times 0
             }
         }
     }

@@ -95,7 +95,11 @@ function Set-FogBugzAuthContext {
         [string]$UserName,
 
         [Parameter(Mandatory)]
-        [string]$Token
+        [string]$Token,
+
+        [string]$SelectedCaseId,
+
+        [string]$SelectedCaseTitle
     )
 
     $path = Get-FogBugzContextPath -WorkingDirectory $WorkingDirectory
@@ -104,7 +108,7 @@ function Set-FogBugzAuthContext {
         New-Item -ItemType Directory -Path $storeRoot -Force | Out-Null
     }
 
-    $context = [pscustomobject]@{
+    $context = [ordered]@{
         Version          = 1
         WorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
         BaseUri          = $BaseUri.Trim()
@@ -113,7 +117,15 @@ function Set-FogBugzAuthContext {
         UpdatedAtUtc     = [datetime]::UtcNow.ToString('o')
     }
 
-    $context | ConvertTo-Json | Set-Content -LiteralPath $path -Encoding UTF8
+    if (-not [string]::IsNullOrWhiteSpace($SelectedCaseId)) {
+        $context['SelectedCase'] = [ordered]@{
+            Id          = $SelectedCaseId
+            Title       = $SelectedCaseTitle
+            UpdatedAtUtc = [datetime]::UtcNow.ToString('o')
+        }
+    }
+
+    $context | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $path -Encoding UTF8
 }
 
 function Get-FogBugzAuthContext {
@@ -132,13 +144,67 @@ function Get-FogBugzAuthContext {
         return $null
     }
 
+    $selectedCase = $null
+    if ($stored.PSObject.Properties.Match('SelectedCase').Count -gt 0 -and $stored.SelectedCase) {
+        $selectedCase = [pscustomobject]@{
+            Id          = [string]$stored.SelectedCase.Id
+            Title       = [string]$stored.SelectedCase.Title
+            UpdatedAtUtc = [string]$stored.SelectedCase.UpdatedAtUtc
+        }
+    }
+
     [pscustomobject]@{
         BaseUri          = [string]$stored.BaseUri
         Token            = Unprotect-FogBugzToken -ProtectedToken ([string]$stored.TokenProtected)
         UserName         = [string]$stored.UserName
         WorkingDirectory = [string]$stored.WorkingDirectory
         CachePath        = $path
+        SelectedCase     = $selectedCase
     }
+}
+
+function Set-FogBugzSelectedCase {
+    param(
+        [Parameter(Mandatory)]
+        [string]$WorkingDirectory,
+
+        [Parameter(Mandatory)]
+        [object]$Case
+    )
+
+    $resolvedWorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
+    $context = Get-FogBugzAuthContext -WorkingDirectory $resolvedWorkingDirectory
+    if (-not $context) {
+        throw "No FogBugz session was found for '$resolvedWorkingDirectory'. Run Initialize-FogBugzSession (alias: fblogin)."
+    }
+
+    $caseId = [string](Get-FogBugzResponseValue -InputObject $Case -Name 'Id')
+    if ([string]::IsNullOrWhiteSpace($caseId)) {
+        $caseId = [string](Get-FogBugzResponseValue -InputObject $Case -Name 'ixBug')
+    }
+    if ([string]::IsNullOrWhiteSpace($caseId)) {
+        throw 'Case.Id is required to store the current FogBugz selection.'
+    }
+
+    $caseTitle = [string](Get-FogBugzResponseValue -InputObject $Case -Name 'Title')
+    if ([string]::IsNullOrWhiteSpace($caseTitle)) {
+        $caseTitle = [string](Get-FogBugzResponseValue -InputObject $Case -Name 'sTitle')
+    }
+
+    Set-FogBugzAuthContext -WorkingDirectory $resolvedWorkingDirectory -BaseUri $context.BaseUri -UserName $context.UserName -Token $context.Token -SelectedCaseId $caseId -SelectedCaseTitle $caseTitle
+}
+
+function Get-FogBugzSelectedCase {
+    param(
+        [string]$WorkingDirectory = (Get-Location).Path
+    )
+
+    $context = Get-FogBugzAuthContext -WorkingDirectory ([IO.Path]::GetFullPath($WorkingDirectory))
+    if ($context) {
+        return $context.SelectedCase
+    }
+
+    $null
 }
 
 function Invoke-FogBugzApi {
@@ -175,6 +241,70 @@ function Invoke-FogBugzApi {
     }
 
     $response
+}
+
+function Invoke-FogBugzMultipartApi {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$BaseUri,
+
+        [Parameter(Mandatory)]
+        [string]$Command,
+
+        [string]$Token,
+
+        [hashtable]$Parameter = @{},
+
+        [object[]]$File = @()
+    )
+
+    $client = [System.Net.Http.HttpClient]::new()
+    $multipart = [System.Net.Http.MultipartFormDataContent]::new()
+    try {
+        $multipart.Add([System.Net.Http.StringContent]::new($Command), 'cmd')
+
+        if (-not [string]::IsNullOrWhiteSpace($Token)) {
+            $multipart.Add([System.Net.Http.StringContent]::new($Token), 'token')
+        }
+
+        foreach ($key in ($Parameter.Keys | Sort-Object)) {
+            $value = [string]$Parameter[$key]
+            $multipart.Add([System.Net.Http.StringContent]::new($value), $key)
+        }
+
+        $index = 1
+        foreach ($item in $File) {
+            $fileInfo = [System.IO.FileInfo]$item
+            $bytes = [System.IO.File]::ReadAllBytes($fileInfo.FullName)
+            $fileContent = [System.Net.Http.ByteArrayContent]::new($bytes)
+            $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse('application/octet-stream')
+            $multipart.Add($fileContent, "File$index", $fileInfo.Name)
+            $index++
+        }
+
+        if ($File.Count -gt 0) {
+            $multipart.Add([System.Net.Http.StringContent]::new([string]$File.Count), 'nFileCount')
+        }
+
+        $response = $client.PostAsync(([Uri]::new($BaseUri.TrimEnd('/') + '/api.asp')), $multipart).GetAwaiter().GetResult()
+        $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        if (-not $response.IsSuccessStatusCode) {
+            throw "FogBugz API error for cmd '$Command': $([int]$response.StatusCode) $($response.ReasonPhrase)"
+        }
+
+        $xml = [xml]$body
+        $errorMessage = Get-FogBugzResponseValue -InputObject $xml -Name 'Error'
+        if (-not [string]::IsNullOrWhiteSpace($errorMessage)) {
+            throw "FogBugz API error for cmd '$Command': $errorMessage"
+        }
+
+        $xml
+    }
+    finally {
+        if ($multipart) { $multipart.Dispose() }
+        if ($client) { $client.Dispose() }
+    }
 }
 
 function Get-FogBugzResponseValue {
@@ -667,7 +797,9 @@ function Get-FogBugzCaseDetails {
     $result['Attachments'] = $attachments
     $result['ContextSummary'] = "Loaded $($comments.Count) comments and $($attachments.Count) attachments."
 
-    [pscustomobject]$result
+    $caseDetails = [pscustomobject]$result
+    Set-FogBugzSelectedCase -WorkingDirectory $WorkingDirectory -Case $caseDetails
+    $caseDetails
 }
 
 function Select-FogBugzCase {
@@ -843,13 +975,146 @@ function Find-FogBugzCase {
     $ranked
 }
 
+function Resolve-FogBugzAttachmentPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string[]]$AttachmentPath
+    )
+
+    $resolved = New-Object System.Collections.Generic.List[object]
+    $seen = @()
+
+    foreach ($path in $AttachmentPath) {
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        $item = Get-Item -LiteralPath $path -ErrorAction Stop
+        if ($item.PSIsContainer) {
+            Write-Warning "Directory attachment '$($item.FullName)' will upload top-level files only."
+            $children = @(Get-ChildItem -LiteralPath $item.FullName -File -Force -ErrorAction Stop)
+            $excluded = @(
+                $children | Where-Object {
+                    (([int]$_.Attributes -band [int][System.IO.FileAttributes]::Hidden) -ne 0) -or
+                    (([int]$_.Attributes -band [int][System.IO.FileAttributes]::System) -ne 0)
+                }
+            )
+            if ($excluded.Count -gt 0) {
+                Write-Warning "Skipping $($excluded.Count) hidden or system file(s) in '$($item.FullName)'."
+            }
+
+            foreach ($child in $children) {
+                if (
+                    (([int]$child.Attributes -band [int][System.IO.FileAttributes]::Hidden) -ne 0) -or
+                    (([int]$child.Attributes -band [int][System.IO.FileAttributes]::System) -ne 0)
+                ) {
+                    continue
+                }
+
+                if ($seen -notcontains $child.FullName) {
+                    $seen += $child.FullName
+                    $resolved.Add($child)
+                }
+            }
+            continue
+        }
+
+        if ($seen -notcontains $item.FullName) {
+            $seen += $item.FullName
+            $resolved.Add($item)
+        }
+    }
+
+    if ($resolved.Count -eq 0) {
+        throw 'No uploadable attachments were found.'
+    }
+
+    $resolved.ToArray()
+}
+
+function Add-FogBugzCaseComment {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [string]$Comment,
+
+        [string]$CaseNumber,
+
+        [Alias('Attachments')]
+        [string[]]$AttachmentPath,
+
+        [pscustomobject]$Session,
+
+        [string]$WorkingDirectory = (Get-Location).Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Comment)) {
+        throw 'Comment is required.'
+    }
+
+    $resolvedWorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
+    if ($null -eq $Session) {
+        $Session = Connect-FogBugzSession -WorkingDirectory $resolvedWorkingDirectory
+    }
+
+    $targetCase = $null
+    if (-not [string]::IsNullOrWhiteSpace($CaseNumber)) {
+        $targetCase = Get-FogBugzCaseDetails -Session $Session -CaseNumber $CaseNumber -WorkingDirectory $resolvedWorkingDirectory
+    }
+    else {
+        $targetCase = Get-FogBugzSelectedCase -WorkingDirectory $resolvedWorkingDirectory
+        if ($null -eq $targetCase) {
+            throw "No current FogBugz case is selected for '$resolvedWorkingDirectory'. Run fbpick or pass -CaseNumber."
+        }
+    }
+
+    $attachmentFiles = @()
+    if ($AttachmentPath) {
+        $attachmentFiles = @(Resolve-FogBugzAttachmentPath -AttachmentPath $AttachmentPath)
+    }
+
+    $targetLabel = "case $($targetCase.Id)"
+    if (-not [string]::IsNullOrWhiteSpace([string]$targetCase.Title)) {
+        $targetLabel += " - $($targetCase.Title)"
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($targetLabel, 'Post FogBugz comment')) {
+        return
+    }
+
+    $parameter = @{
+        ixBug      = [string]$targetCase.Id
+        sEvent     = $Comment
+        fRichText  = '0'
+    }
+
+    $response = Invoke-FogBugzMultipartApi -BaseUri $Session.BaseUri -Command 'edit' -Token $Session.Token -Parameter $parameter -File $attachmentFiles
+    $updatedCase = @(ConvertFrom-FogBugzCase -InputObject $response) | Select-Object -First 1
+    if ($updatedCase) {
+        Set-FogBugzSelectedCase -WorkingDirectory $resolvedWorkingDirectory -Case $updatedCase
+    }
+    else {
+        Set-FogBugzSelectedCase -WorkingDirectory $resolvedWorkingDirectory -Case $targetCase
+    }
+
+    [pscustomobject]@{
+        CaseNumber      = [string]$targetCase.Id
+        Title           = [string]$targetCase.Title
+        Comment         = $Comment
+        AttachmentCount = $attachmentFiles.Count
+        Attachments     = @($attachmentFiles | ForEach-Object { $_.Name })
+    }
+}
+
 Set-Alias -Name fblogin -Value Initialize-FogBugzSession
 Set-Alias -Name fbconnect -Value Connect-FogBugzSession
 Set-Alias -Name fbpick -Value Find-FogBugzCase
+Set-Alias -Name fbcomment -Value Add-FogBugzCaseComment
 Set-Alias -Name fbscore -Value Get-FogBugzCaseScore
 Set-Alias -Name fbrank -Value Get-FogBugzRankedCase
 Set-Alias -Name fbcase -Value Get-FogBugzCaseDetails
 Set-Alias -Name fbfilter -Value Resolve-FogBugzFilter
 Set-Alias -Name fbselect -Value Select-FogBugzCase
 
-Export-ModuleMember -Function Connect-FogBugzSession, Find-FogBugzCase, Get-FogBugzCaseDetails, Get-FogBugzCaseScore, Get-FogBugzRankedCase, Initialize-FogBugzSession, Resolve-FogBugzFilter, Select-FogBugzCase -Alias fblogin, fbconnect, fbpick, fbscore, fbrank, fbcase, fbfilter, fbselect
+Export-ModuleMember -Function Add-FogBugzCaseComment, Connect-FogBugzSession, Find-FogBugzCase, Get-FogBugzCaseDetails, Get-FogBugzCaseScore, Get-FogBugzRankedCase, Initialize-FogBugzSession, Resolve-FogBugzFilter, Select-FogBugzCase -Alias fblogin, fbconnect, fbpick, fbcomment, fbscore, fbrank, fbcase, fbfilter, fbselect
