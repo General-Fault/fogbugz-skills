@@ -1,0 +1,38 @@
+name: Governance Checks
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - '.github/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - '.github/**'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-governance-files:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate required governance files exist
+        shell: pwsh
+        run: |
+          $required = @(
+            '.github/copilot-instructions.md'
+            '.github/pull_request_template.md'
+            '.github/workflows/policy-checks.yml'
+          )
+
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Missing required governance file: $path"
+            }
+          }
+
+          Write-Host 'Governance file checks passed.'
