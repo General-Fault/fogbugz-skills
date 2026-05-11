@@ -9,6 +9,7 @@
     FunctionsToExport = @(
         'Connect-FogBugzSession'
         'Find-FogBugzCase'
+        'Get-FogBugzCaseDetails'
         'Get-FogBugzCaseScore'
         'Get-FogBugzRankedCase'
         'Initialize-FogBugzSession'
@@ -19,6 +20,7 @@
         'fblogin'
         'fbconnect'
         'fbpick'
+        'fbcase'
         'fbscore'
         'fbrank'
         'fbfilter'

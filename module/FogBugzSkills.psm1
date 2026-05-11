@@ -552,11 +552,131 @@ function Get-FogBugzCaseFeed {
     @(ConvertFrom-FogBugzCase -InputObject $response)
 }
 
+function Get-FogBugzCaseDetails {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [string]$CaseNumber,
+
+        [pscustomobject]$Session,
+
+        [string]$WorkingDirectory = (Get-Location).Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CaseNumber)) {
+        throw 'CaseNumber is required.'
+    }
+
+    if ($null -eq $Session) {
+        $Session = Connect-FogBugzSession -WorkingDirectory $WorkingDirectory
+    }
+
+    $response = Invoke-FogBugzApi -BaseUri $Session.BaseUri -Command 'search' -Token $Session.Token -Parameter @{
+        q    = "ixBug:$CaseNumber"
+        cols = 'ixBug,sTitle,ixPriority,sStatus,fBlocked,dtLastUpdated,sFilter,events,attachments'
+    }
+
+    $detailedCase = @(ConvertFrom-FogBugzCase -InputObject $response) | Select-Object -First 1
+    if ($null -eq $detailedCase) {
+        throw "FogBugz returned no details for case '$CaseNumber'."
+    }
+
+    $caseNode = $response.SelectSingleNode('//case')
+    $comments = @()
+    $attachments = @()
+    $attachmentSeen = @{}
+
+    if ($caseNode) {
+        $eventNodes = $caseNode.SelectNodes('.//event')
+        foreach ($eventNode in $eventNodes) {
+            $eventId = [string](Get-FogBugzResponseValue -InputObject $eventNode -Name 'ixBugEvent')
+            $author = [string](Get-FogBugzResponseValue -InputObject $eventNode -Name 'sPerson')
+            if ([string]::IsNullOrWhiteSpace($author)) {
+                $author = [string](Get-FogBugzResponseValue -InputObject $eventNode -Name 'sBy')
+            }
+
+            $eventText = [string](Get-FogBugzResponseValue -InputObject $eventNode -Name 's')
+            if ([string]::IsNullOrWhiteSpace($eventText)) {
+                $eventText = [string](Get-FogBugzResponseValue -InputObject $eventNode -Name 'sText')
+            }
+            if ([string]::IsNullOrWhiteSpace($eventText)) {
+                $eventText = [string](Get-FogBugzResponseValue -InputObject $eventNode -Name 'sChanges')
+            }
+            if ([string]::IsNullOrWhiteSpace($eventText)) {
+                $eventText = [string](Get-FogBugzResponseValue -InputObject $eventNode -Name 'evtDescription')
+            }
+
+            $eventTime = [string](Get-FogBugzResponseValue -InputObject $eventNode -Name 'dt')
+            if ([string]::IsNullOrWhiteSpace($eventTime)) {
+                $eventTime = [string](Get-FogBugzResponseValue -InputObject $eventNode -Name 'dtWhen')
+            }
+
+            if (
+                -not [string]::IsNullOrWhiteSpace($eventText) -or
+                -not [string]::IsNullOrWhiteSpace($author) -or
+                -not [string]::IsNullOrWhiteSpace($eventTime)
+            ) {
+                $comments += [pscustomobject]@{
+                    EventId   = $eventId
+                    Author    = $author
+                    Timestamp = $eventTime
+                    Text      = $eventText
+                }
+            }
+
+            $eventAttachmentNodes = $eventNode.SelectNodes('.//attachment')
+            foreach ($attachmentNode in $eventAttachmentNodes) {
+                $attachmentId = [string](Get-FogBugzResponseValue -InputObject $attachmentNode -Name 'ixAttachment')
+                if ([string]::IsNullOrWhiteSpace($attachmentId)) {
+                    $attachmentId = [string](Get-FogBugzResponseValue -InputObject $attachmentNode -Name 'id')
+                }
+
+                $fileName = [string](Get-FogBugzResponseValue -InputObject $attachmentNode -Name 'sFileName')
+                if ([string]::IsNullOrWhiteSpace($fileName)) {
+                    $fileName = [string](Get-FogBugzResponseValue -InputObject $attachmentNode -Name 'filename')
+                }
+                if ([string]::IsNullOrWhiteSpace($fileName)) {
+                    $fileName = [string](Get-FogBugzResponseValue -InputObject $attachmentNode -Name 'sDesc')
+                }
+
+                $url = [string](Get-FogBugzResponseValue -InputObject $attachmentNode -Name 'sURL')
+                if ([string]::IsNullOrWhiteSpace($url)) {
+                    $url = [string](Get-FogBugzResponseValue -InputObject $attachmentNode -Name 'url')
+                }
+
+                $key = "$attachmentId|$fileName|$url"
+                if (-not $attachmentSeen.ContainsKey($key)) {
+                    $attachmentSeen[$key] = $true
+                    $attachments += [pscustomobject]@{
+                        AttachmentId = $attachmentId
+                        FileName     = $fileName
+                        Url          = $url
+                        EventId      = $eventId
+                    }
+                }
+            }
+        }
+    }
+
+    $result = [ordered]@{}
+    foreach ($property in $detailedCase.PSObject.Properties) {
+        $result[$property.Name] = $property.Value
+    }
+
+    $result['Comments'] = $comments
+    $result['Attachments'] = $attachments
+    $result['ContextSummary'] = "Loaded $($comments.Count) comments and $($attachments.Count) attachments."
+
+    [pscustomobject]$result
+}
+
 function Select-FogBugzCase {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [object[]]$Case
+        [object[]]$Case,
+
+        [switch]$SelectTopOnEmpty
     )
 
     if ($Case.Count -eq 0) {
@@ -569,9 +689,13 @@ function Select-FogBugzCase {
         Write-Host $display
     }
 
-    $choice = Read-Host 'Choose a case number or press Enter to take the top ranked case'
+    $choice = Read-Host 'Choose a case number'
     if ([string]::IsNullOrWhiteSpace($choice)) {
-        return $Case[0]
+        if ($SelectTopOnEmpty) {
+            return $Case[0]
+        }
+
+        throw 'Selection is required. Enter a case number.'
     }
 
     $selected = 0
@@ -712,7 +836,8 @@ function Find-FogBugzCase {
     $ranked = Get-FogBugzRankedCase -Case $cases | Select-Object -First $Top
 
     if ($Interactive) {
-        return Select-FogBugzCase -Case $ranked
+        $selected = Select-FogBugzCase -Case $ranked
+        return Get-FogBugzCaseDetails -Session $session -CaseNumber ([string]$selected.Id)
     }
 
     $ranked
@@ -723,7 +848,8 @@ Set-Alias -Name fbconnect -Value Connect-FogBugzSession
 Set-Alias -Name fbpick -Value Find-FogBugzCase
 Set-Alias -Name fbscore -Value Get-FogBugzCaseScore
 Set-Alias -Name fbrank -Value Get-FogBugzRankedCase
+Set-Alias -Name fbcase -Value Get-FogBugzCaseDetails
 Set-Alias -Name fbfilter -Value Resolve-FogBugzFilter
 Set-Alias -Name fbselect -Value Select-FogBugzCase
 
-Export-ModuleMember -Function Connect-FogBugzSession, Find-FogBugzCase, Get-FogBugzCaseScore, Get-FogBugzRankedCase, Initialize-FogBugzSession, Resolve-FogBugzFilter, Select-FogBugzCase -Alias fblogin, fbconnect, fbpick, fbscore, fbrank, fbfilter, fbselect
+Export-ModuleMember -Function Connect-FogBugzSession, Find-FogBugzCase, Get-FogBugzCaseDetails, Get-FogBugzCaseScore, Get-FogBugzRankedCase, Initialize-FogBugzSession, Resolve-FogBugzFilter, Select-FogBugzCase -Alias fblogin, fbconnect, fbpick, fbscore, fbrank, fbcase, fbfilter, fbselect

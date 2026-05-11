@@ -109,7 +109,7 @@ Describe 'FogBugzSkills' {
     }
 
     Context 'Select-FogBugzCase' {
-        It 'returns the top case when the user presses enter' {
+        It 'requires explicit case selection by default' {
             InModuleScope FogBugzSkills {
                 Mock Read-Host { '' }
 
@@ -118,7 +118,20 @@ Describe 'FogBugzSkills' {
                     [pscustomobject]@{ Id = 11; Title = 'Second'; Score = 8; Explanation = 'fine' }
                 )
 
-                (Select-FogBugzCase -Case $cases).Id | Should -Be 10
+                { Select-FogBugzCase -Case $cases } | Should -Throw '*Selection is required*'
+            }
+        }
+
+        It 'can select top case on empty input when explicitly enabled' {
+            InModuleScope FogBugzSkills {
+                Mock Read-Host { '' }
+
+                $cases = @(
+                    [pscustomobject]@{ Id = 10; Title = 'Top'; Score = 9; Explanation = 'good' }
+                    [pscustomobject]@{ Id = 11; Title = 'Second'; Score = 8; Explanation = 'fine' }
+                )
+
+                (Select-FogBugzCase -Case $cases -SelectTopOnEmpty).Id | Should -Be 10
             }
         }
     }
@@ -156,6 +169,7 @@ Describe 'FogBugzSkills' {
                 fblogin   = 'Initialize-FogBugzSession'
                 fbconnect = 'Connect-FogBugzSession'
                 fbpick    = 'Find-FogBugzCase'
+                fbcase    = 'Get-FogBugzCaseDetails'
                 fbscore   = 'Get-FogBugzCaseScore'
                 fbrank    = 'Get-FogBugzRankedCase'
                 fbfilter  = 'Resolve-FogBugzFilter'
@@ -253,6 +267,94 @@ Describe 'FogBugzSkills' {
                 $filters[0].Name | Should -Be 'My Queue'
                 Should -Invoke Invoke-FogBugzApi -ParameterFilter { $Command -eq 'savedfilters' } -Times 1
                 Should -Invoke Invoke-FogBugzApi -ParameterFilter { $Command -eq 'listFilters' } -Times 1
+            }
+        }
+
+        It 'loads comments and attachments for a case number' {
+            InModuleScope FogBugzSkills {
+                Mock Invoke-FogBugzApi {
+                    [xml]@'
+<response>
+  <cases>
+    <case>
+      <ixBug>14630</ixBug>
+      <sTitle>Case with context</sTitle>
+      <events>
+        <event>
+          <ixBugEvent>11</ixBugEvent>
+          <sPerson>Alice</sPerson>
+          <dt>2026-05-11T12:00:00Z</dt>
+          <s>Initial triage note</s>
+          <attachment ixAttachment="501" sFileName="log.txt" sURL="https://example/log.txt" />
+        </event>
+      </events>
+    </case>
+  </cases>
+</response>
+'@
+                }
+
+                $session = [pscustomobject]@{ BaseUri = 'https://yourtenant.fogbugz.com'; Token = 'abc' }
+                $context = Get-FogBugzCaseDetails -Session $session -CaseNumber '14630'
+                $context.Comments.Count | Should -Be 1
+                $context.Comments[0].Text | Should -Be 'Initial triage note'
+                $context.Attachments.Count | Should -Be 1
+                $context.Attachments[0].FileName | Should -Be 'log.txt'
+            }
+        }
+
+        It 'can load case details by case number using stored session context' {
+            InModuleScope FogBugzSkills {
+                Mock Connect-FogBugzSession {
+                    [pscustomobject]@{ BaseUri = 'https://yourtenant.fogbugz.com'; Token = 'abc' }
+                }
+                Mock Invoke-FogBugzApi {
+                    [xml]'<response><cases><case><ixBug>14630</ixBug><sTitle>Case from lookup</sTitle></case></cases></response>'
+                }
+
+                $context = Get-FogBugzCaseDetails -CaseNumber '14630'
+                $context.Id | Should -Be '14630'
+                $context.Title | Should -Be 'Case from lookup'
+                Should -Invoke Connect-FogBugzSession -Times 1
+            }
+        }
+
+        It 'supports positional case number input for fbcase style usage' {
+            InModuleScope FogBugzSkills {
+                Mock Connect-FogBugzSession {
+                    [pscustomobject]@{ BaseUri = 'https://yourtenant.fogbugz.com'; Token = 'abc' }
+                }
+                Mock Invoke-FogBugzApi {
+                    [xml]'<response><cases><case><ixBug>14630</ixBug><sTitle>Positional call</sTitle></case></cases></response>'
+                }
+
+                $context = Get-FogBugzCaseDetails '14630'
+                $context.Id | Should -Be '14630'
+                $context.Title | Should -Be 'Positional call'
+            }
+        }
+
+        It 'loads case context during interactive pick flow' {
+            InModuleScope FogBugzSkills {
+                Mock Connect-FogBugzSession {
+                    [pscustomobject]@{ BaseUri = 'https://yourtenant.fogbugz.com'; Token = 'abc' }
+                }
+                Mock Get-FogBugzCaseFeed {
+                    @([pscustomobject]@{ Id = '14630'; Title = 'Case one'; Priority = 4; Status = 'Active'; IsBlocked = $false; Updated = '2026-05-10T00:00:00Z' })
+                }
+                Mock Get-FogBugzRankedCase {
+                    @([pscustomobject]@{ Id = '14630'; Title = 'Case one'; Priority = 4; Status = 'Active'; Score = 33; Explanation = 'unblocked (+25)' })
+                }
+                Mock Select-FogBugzCase {
+                    [pscustomobject]@{ Id = '14630'; Title = 'Case one'; Priority = 4; Status = 'Active'; Score = 33; Explanation = 'unblocked (+25)' }
+                }
+                Mock Get-FogBugzCaseDetails {
+                    [pscustomobject]@{ Id = '14630'; Title = 'Case one'; Comments = @(); Attachments = @(); ContextSummary = 'Loaded 0 comments and 0 attachments.' }
+                }
+
+                $result = Find-FogBugzCase -FilterName 'Any Filter' -Interactive
+                $result.ContextSummary | Should -Be 'Loaded 0 comments and 0 attachments.'
+                Should -Invoke Get-FogBugzCaseDetails -Times 1
             }
         }
     }
