@@ -138,15 +138,14 @@ Describe 'FogBugzSkills' {
 
     Context 'Auth bootstrap workflow' {
         BeforeEach {
-            $script:OriginalLocalAppData = $env:LOCALAPPDATA
             $script:TempRoot = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
             $script:WorkDir = Join-Path $script:TempRoot 'scriptcenter'
             New-Item -ItemType Directory -Path $script:WorkDir -Force | Out-Null
-            $env:LOCALAPPDATA = $script:TempRoot
+            $env:FOGBUGZ_SELECTED_CASE = $null
         }
 
         AfterEach {
-            $env:LOCALAPPDATA = $script:OriginalLocalAppData
+            $env:FOGBUGZ_SELECTED_CASE = $null
             if (Test-Path -LiteralPath $script:TempRoot) {
                 Remove-Item -LiteralPath $script:TempRoot -Recurse -Force
             }
@@ -189,6 +188,8 @@ Describe 'FogBugzSkills' {
                 Mock Invoke-FogBugzApi {
                     [pscustomobject]@{ Token = 'token-123' }
                 }
+                Mock Set-FogBugzCredential { }
+                Mock Get-FogBugzCredential { [pscustomobject]@{ UserName = 'dummy.user@example.com'; Token = 'token-123' } }
 
                 $cred = [pscredential]::new(
                     'dummy.user@example.com',
@@ -213,6 +214,7 @@ Describe 'FogBugzSkills' {
                 Mock Invoke-FogBugzApi {
                     [xml]'<response><token>token-xml-lower</token></response>'
                 }
+                Mock Set-FogBugzCredential { }
 
                 $cred = [pscredential]::new(
                     'dummy.user@example.com',
@@ -332,6 +334,7 @@ Describe 'FogBugzSkills' {
                 Mock Invoke-FogBugzApi -ParameterFilter { $Command -eq 'search' } {
                     [xml]'<response><cases><case><ixBug>14630</ixBug><sTitle>Case from lookup</sTitle></case></cases></response>'
                 }
+                Mock Set-FogBugzCredential { }
 
                 $cred = [pscredential]::new(
                     'dummy.user@example.com',
@@ -341,7 +344,7 @@ Describe 'FogBugzSkills' {
                 $session = Initialize-FogBugzSession -BaseUri 'https://yourtenant.fogbugz.com' -WorkingDirectory $WorkDir -Credential $cred
                 [void](Get-FogBugzCaseDetails -Session $session -CaseNumber '14630' -WorkingDirectory $WorkDir)
 
-                $selected = Get-FogBugzSelectedCase -WorkingDirectory $WorkDir
+                $selected = Get-FogBugzSelectedCase
                 $selected.Id | Should -Be '14630'
                 $selected.Title | Should -Be 'Case from lookup'
             }
@@ -424,6 +427,8 @@ Describe 'FogBugzSkills' {
                 Mock Invoke-FogBugzMultipartApi {
                     [xml]'<response><ok>true</ok></response>'
                 }
+                Mock Set-FogBugzCredential { }
+                Mock Get-FogBugzCredential { [pscustomobject]@{ UserName = 'dummy.user@example.com'; Token = 'token-123' } }
 
                 $cred = [pscredential]::new(
                     'dummy.user@example.com',
@@ -431,7 +436,7 @@ Describe 'FogBugzSkills' {
                 )
 
                 $session = Initialize-FogBugzSession -BaseUri 'https://yourtenant.fogbugz.com' -WorkingDirectory $WorkDir -Credential $cred
-                Set-FogBugzSelectedCase -WorkingDirectory $WorkDir -Case ([pscustomobject]@{ Id = '14630'; Title = 'Selected case' })
+                Set-FogBugzSelectedCase -Case ([pscustomobject]@{ Id = '14630'; Title = 'Selected case' })
 
                 $result = Add-FogBugzCaseComment 'Selected case note' -Session $session -WorkingDirectory $WorkDir -Confirm:$false
                 $result.CaseNumber | Should -Be '14630'
@@ -450,6 +455,8 @@ Describe 'FogBugzSkills' {
                 Mock Invoke-FogBugzMultipartApi {
                     [xml]'<response><ok>true</ok></response>'
                 }
+                Mock Set-FogBugzCredential { }
+                Mock Get-FogBugzCredential { [pscustomobject]@{ UserName = 'dummy.user@example.com'; Token = 'token-123' } }
 
                 $cred = [pscredential]::new(
                     'dummy.user@example.com',
@@ -457,7 +464,7 @@ Describe 'FogBugzSkills' {
                 )
 
                 $session = Initialize-FogBugzSession -BaseUri 'https://yourtenant.fogbugz.com' -WorkingDirectory $WorkDir -Credential $cred
-                Set-FogBugzSelectedCase -WorkingDirectory $WorkDir -Case ([pscustomobject]@{ Id = '14630'; Title = 'Selected case' })
+                Set-FogBugzSelectedCase -Case ([pscustomobject]@{ Id = '14630'; Title = 'Selected case' })
 
                 $missing = Join-Path $WorkDir 'missing.log'
                 { Add-FogBugzCaseComment 'Selected case note' -Session $session -WorkingDirectory $WorkDir -AttachmentPath @($missing) -Confirm:$false } | Should -Throw
