@@ -41,7 +41,7 @@ Import `module/FogBugzSkills.psd1` to use it locally.
    `fblogin` (alias for `Initialize-FogBugzSession`).
 2. Enter tenant URI and credentials at the secure local prompt.
 3. Run case picker:
-   `Find-FogBugzCase -FilterName "<your filter>" -Interactive`
+   `fbpick "<your filter>" -Interactive`
 
 The tenant context and session token are cached per working directory for later non-interactive module usage.
 When a case is selected interactively, the module now loads case comments/events and attachment metadata into the returned case context.

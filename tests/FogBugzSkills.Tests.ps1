@@ -390,6 +390,30 @@ Describe 'FogBugzSkills' {
             }
         }
 
+        It 'supports positional filter name input for fbpick style usage' {
+            InModuleScope FogBugzSkills {
+                Mock Connect-FogBugzSession {
+                    [pscustomobject]@{ BaseUri = 'https://yourtenant.fogbugz.com'; Token = 'abc' }
+                }
+                Mock Get-FogBugzCaseFeed {
+                    @([pscustomobject]@{ Id = '14630'; Title = 'Case one'; Priority = 4; Status = 'Active'; IsBlocked = $false; Updated = '2026-05-10T00:00:00Z' })
+                }
+                Mock Get-FogBugzRankedCase {
+                    @([pscustomobject]@{ Id = '14630'; Title = 'Case one'; Priority = 4; Status = 'Active'; Score = 33; Explanation = 'unblocked (+25)' })
+                }
+                Mock Select-FogBugzCase {
+                    [pscustomobject]@{ Id = '14630'; Title = 'Case one'; Priority = 4; Status = 'Active'; Score = 33; Explanation = 'unblocked (+25)' }
+                }
+                Mock Get-FogBugzCaseDetails {
+                    [pscustomobject]@{ Id = '14630'; Title = 'Case one'; Comments = @(); Attachments = @(); ContextSummary = 'Loaded 0 comments and 0 attachments.' }
+                }
+
+                $result = Find-FogBugzCase 'Any Filter' -Interactive
+                $result.Id | Should -Be '14630'
+                Should -Invoke Get-FogBugzCaseFeed -ParameterFilter { $FilterName -eq 'Any Filter' } -Times 1
+            }
+        }
+
         It 'resolves directory attachments non-recursively and skips hidden files' {
             InModuleScope FogBugzSkills {
                 $root = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
