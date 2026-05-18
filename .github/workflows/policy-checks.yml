@@ -38,8 +38,9 @@ jobs:
             });
 
             const changed = files.map(f => f.filename);
-            const codeChanges = changed.some(f =>
-              f.endsWith('.ps1') || f.endsWith('.psm1') || f.endsWith('.psd1')
+            const codeChanges = files.some(f =>
+              f.status !== 'removed' &&
+              (f.filename.endsWith('.ps1') || f.filename.endsWith('.psm1') || f.filename.endsWith('.psd1'))
             );
 
             const testChanges = changed.some(f =>
