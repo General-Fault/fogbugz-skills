@@ -12,16 +12,18 @@ Use this skill to resume from saved local case progress and continue execution.
 
 ## Execution flow
 
-1. Ensure module and local auth context are available (`fbconnect`).
-2. Load local progress entries:
+1. Load local progress entries:
    - `@($entries = fbresume)`
-3. Select target case in this priority order:
+2. Select target case in this priority order:
    - explicit `caseNumber` input
    - branch match when current branch contains a case number
    - single available progress entry
    - otherwise prompt the user with detailed options and let them choose
-4. Resolve and load live case context:
+3. Resolve and load live case context:
    - `fbcase <selected case number>`
+4. If `fbcase` fails because local auth/config is missing:
+   - Ask the user to run `fblogin` (`Initialize-FogBugzSession`) in the same working directory.
+   - Then retry `fbcase <selected case number>`.
 5. Return resume context:
    - case id/title/status
    - saved work summary
@@ -41,4 +43,4 @@ Use this skill to resume from saved local case progress and continue execution.
 - Do not generate a new plan; continue from the saved next steps.
 - If no local progress exists, state that clearly and suggest `fbpick` then `fogbugz-handoff-case`.
 - If a requested case number has no saved progress, say so explicitly.
-
+- Avoid redundant preflight calls to `fbconnect`; only ask for `fblogin` when auth/config errors occur during case loading.

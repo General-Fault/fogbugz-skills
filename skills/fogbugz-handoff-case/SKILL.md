@@ -18,10 +18,12 @@ Use this skill to persist local case progress for cross-agent handoff.
 
 ## Execution flow
 
-1. Ensure module and local auth context are available (`fbconnect`).
-2. Ensure target case is selected:
+1. Ensure target case is selected:
    - if `caseNumber` provided: run `fbcase <caseNumber>`
    - else rely on current selected case from prior `fbpick`/`fbcase`
+2. If `fbcase` fails because local auth/config is missing:
+   - Ask the user to run `fblogin` (`Initialize-FogBugzSession`) in the same working directory.
+   - Then retry target case selection.
 3. Collect handoff details in structured form:
    - `changes`: `@(@{ Path = '...'; Intent = '...' })`
    - `testsRun`: `@(@{ Command = '...'; Result = '...' })`
@@ -37,4 +39,4 @@ Use this skill to persist local case progress for cross-agent handoff.
 - Do not create a new implementation plan during handoff.
 - Make sure next steps are actionable for the next agent.
 - If required fields are missing, ask for them before saving.
-
+- Avoid redundant preflight calls to `fbconnect`; only ask for `fblogin` when auth/config errors occur during case loading.

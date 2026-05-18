@@ -27,5 +27,5 @@ Use this skill to delete local case-progress entries safely.
 
 - Be explicit that this updates local progress only.
 - Never imply FogBugz case content/status was modified.
+- Do not run `fbconnect`/`fblogin`; this is a local file-only operation.
 - If the target case is missing from local progress, report that directly.
-
