@@ -44,11 +44,19 @@ Import `module/FogBugzSkills.psd1` to use it locally.
    `fbpick "<your filter>" -Interactive`
 
 The tenant context and session token are cached per working directory for later non-interactive module usage.
+Local metadata is stored in `.fogbugz\`:
+- `.fogbugz\config.json` for tenant URI context
+- `.fogbugz\case-progress.json` for local multi-case handoff progress
+
 When a case is selected interactively, the module now loads case comments/events and attachment metadata into the returned case context.
 You can also load details directly by case number with `Get-FogBugzCaseDetails` / `fbcase 14630`.
 The current selected case is stored per working directory, so `fbcomment` can reuse the last picked or loaded case without retyping the case number.
 
-The companion skill scaffold lives at `skills/fogbugz-pick-case/SKILL.md`.
+Skill scaffolds:
+- `skills/fogbugz-pick-case/SKILL.md`
+- `skills/fogbugz-handoff-case/SKILL.md`
+- `skills/fogbugz-resume-case/SKILL.md`
+- `skills/fogbugz-clear-case-progress/SKILL.md`
 
 Short aliases are available:
 - `fblogin` -> `Initialize-FogBugzSession`
@@ -56,6 +64,9 @@ Short aliases are available:
 - `fbpick` -> `Find-FogBugzCase`
 - `fbcomment` -> `Add-FogBugzCaseComment`
 - `fbcase` -> `Get-FogBugzCaseDetails`
+- `fbsaveprogress` -> `Save-FogBugzCaseProgress`
+- `fbresume` -> `Get-FogBugzCaseProgress`
+- `fbclearprogress` -> `Remove-FogBugzCaseProgress`
 - `fbscore` -> `Get-FogBugzCaseScore`
 - `fbrank` -> `Get-FogBugzRankedCase`
 - `fbfilter` -> `Resolve-FogBugzFilter`

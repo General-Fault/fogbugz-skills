@@ -101,22 +101,48 @@ function ConvertTo-FogBugzPlainText {
     }
 }
 
-# .fogbugz config file — stores BaseUri for the working directory tree
+# .fogbugz directory — stores local FogBugz metadata for the working directory tree
+function Get-FogBugzStoragePath {
+    param(
+        [Parameter(Mandatory)]
+        [string]$WorkingDirectory,
+
+        [switch]$CreateIfMissing
+    )
+
+    $dir = [IO.Path]::GetFullPath($WorkingDirectory)
+    while ($dir) {
+        $candidate = Join-Path $dir '.fogbugz'
+        if (Test-Path -LiteralPath $candidate -PathType Container) { return $candidate }
+        $parent = Split-Path -Parent $dir
+        if ($parent -eq $dir) { break }
+        $dir = $parent
+    }
+
+    if ($CreateIfMissing) {
+        $storagePath = Join-Path ([IO.Path]::GetFullPath($WorkingDirectory)) '.fogbugz'
+        if (-not (Test-Path -LiteralPath $storagePath -PathType Container)) {
+            [void](New-Item -Path $storagePath -ItemType Directory -Force)
+        }
+
+        return $storagePath
+    }
+
+    $null
+}
+
 function Get-FogBugzConfigPath {
     param(
         [Parameter(Mandatory)]
         [string]$WorkingDirectory
     )
 
-    $dir = [IO.Path]::GetFullPath($WorkingDirectory)
-    while ($dir) {
-        $candidate = Join-Path $dir '.fogbugz'
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
-        $parent = Split-Path -Parent $dir
-        if ($parent -eq $dir) { break }
-        $dir = $parent
-    }
-    $null
+    $storagePath = Get-FogBugzStoragePath -WorkingDirectory $WorkingDirectory
+    if (-not $storagePath) { return $null }
+
+    $path = Join-Path $storagePath 'config.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    $path
 }
 
 function Read-FogBugzConfig {
@@ -143,7 +169,8 @@ function Write-FogBugzConfig {
         [string]$BaseUri
     )
 
-    $path = Join-Path ([IO.Path]::GetFullPath($WorkingDirectory)) '.fogbugz'
+    $storagePath = Get-FogBugzStoragePath -WorkingDirectory $WorkingDirectory -CreateIfMissing
+    $path = Join-Path $storagePath 'config.json'
     @{ BaseUri = $BaseUri.Trim() } | ConvertTo-Json | Set-Content -LiteralPath $path -Encoding UTF8
 }
 
@@ -222,6 +249,232 @@ function Get-FogBugzSelectedCase {
         Id           = [string]$data.Id
         Title        = [string]$data.Title
         UpdatedAtUtc = [string]$data.UpdatedAtUtc
+    }
+}
+
+function Get-FogBugzCaseProgressPath {
+    param(
+        [Parameter(Mandatory)]
+        [string]$WorkingDirectory,
+
+        [switch]$CreateIfMissing
+    )
+
+    $storagePath = Get-FogBugzStoragePath -WorkingDirectory $WorkingDirectory -CreateIfMissing:$CreateIfMissing
+    if (-not $storagePath) { return $null }
+    Join-Path $storagePath 'case-progress.json'
+}
+
+function Read-FogBugzCaseProgressData {
+    param(
+        [Parameter(Mandatory)]
+        [string]$WorkingDirectory
+    )
+
+    $path = Get-FogBugzCaseProgressPath -WorkingDirectory $WorkingDirectory
+    if (-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return @()
+    }
+
+    $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if ($null -eq $data) {
+        return @()
+    }
+
+    if ($data.PSObject.Properties.Match('Cases').Count -gt 0) {
+        return @($data.Cases)
+    }
+
+    @()
+}
+
+function Write-FogBugzCaseProgressData {
+    param(
+        [Parameter(Mandatory)]
+        [string]$WorkingDirectory,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]]$CaseProgress
+    )
+
+    $path = Get-FogBugzCaseProgressPath -WorkingDirectory $WorkingDirectory -CreateIfMissing
+    @{ Cases = @($CaseProgress) } | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $path -Encoding UTF8
+}
+
+function Get-FogBugzCaseProgressEntryCaseNumber {
+    param(
+        [Parameter(Mandatory)]
+        [object]$CaseProgress
+    )
+
+    $caseNumber = [string](Get-FogBugzResponseValue -InputObject $CaseProgress -Name 'CaseNumber')
+    if ([string]::IsNullOrWhiteSpace($caseNumber)) {
+        $caseNumber = [string](Get-FogBugzResponseValue -InputObject $CaseProgress -Name 'Id')
+    }
+    if ([string]::IsNullOrWhiteSpace($caseNumber)) {
+        $caseData = Get-FogBugzResponseValue -InputObject $CaseProgress -Name 'Case'
+        if ($null -ne $caseData) {
+            $caseNumber = [string](Get-FogBugzResponseValue -InputObject $caseData -Name 'Id')
+        }
+    }
+
+    $caseNumber
+}
+
+function Save-FogBugzCaseProgress {
+    [CmdletBinding()]
+    param(
+        [string]$CaseNumber,
+
+        [string]$Title,
+
+        [string]$Status,
+
+        [string]$Branch,
+
+        [Parameter(Mandatory)]
+        [string]$WorkSummary,
+
+        [object[]]$Changes = @(),
+
+        [object[]]$TestsRun = @(),
+
+        [string[]]$OpenQuestions = @(),
+
+        [string[]]$NextSteps = @(),
+
+        [string[]]$Artifacts = @(),
+
+        [string]$WorkingDirectory = (Get-Location).Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($WorkSummary)) {
+        throw 'WorkSummary is required.'
+    }
+
+    $resolvedWorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
+    $selectedCase = Get-FogBugzSelectedCase -WorkingDirectory $resolvedWorkingDirectory
+    if ([string]::IsNullOrWhiteSpace($CaseNumber) -and $null -ne $selectedCase) {
+        $CaseNumber = [string]$selectedCase.Id
+    }
+    if ([string]::IsNullOrWhiteSpace($Title) -and $null -ne $selectedCase) {
+        $Title = [string]$selectedCase.Title
+    }
+
+    if ([string]::IsNullOrWhiteSpace($CaseNumber)) {
+        throw "CaseNumber is required. Run fbpick/fbcase first or pass -CaseNumber."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Branch)) {
+        $branchName = (& git -C $resolvedWorkingDirectory rev-parse --abbrev-ref HEAD 2>$null)
+        if ($LASTEXITCODE -eq 0) {
+            $Branch = [string]$branchName
+        }
+    }
+
+    $entry = [pscustomobject]@{
+        CaseNumber    = [string]$CaseNumber
+        Title         = [string]$Title
+        Status        = [string]$Status
+        Branch        = [string]$Branch
+        WorkSummary   = [string]$WorkSummary
+        Changes       = @($Changes)
+        TestsRun      = @($TestsRun)
+        OpenQuestions = @($OpenQuestions)
+        NextSteps     = @($NextSteps)
+        Artifacts     = @($Artifacts)
+        UpdatedAtUtc  = [datetime]::UtcNow.ToString('o')
+    }
+
+    $existing = @(Read-FogBugzCaseProgressData -WorkingDirectory $resolvedWorkingDirectory)
+    $remaining = @(
+        $existing | Where-Object {
+            [string](Get-FogBugzCaseProgressEntryCaseNumber -CaseProgress $_) -ne [string]$CaseNumber
+        }
+    )
+    Write-FogBugzCaseProgressData -WorkingDirectory $resolvedWorkingDirectory -CaseProgress (@($entry) + $remaining)
+    $entry
+}
+
+function Get-FogBugzCaseProgress {
+    [CmdletBinding()]
+    param(
+        [string]$CaseNumber,
+
+        [string]$WorkingDirectory = (Get-Location).Path
+    )
+
+    $resolvedWorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
+    $entries = @(Read-FogBugzCaseProgressData -WorkingDirectory $resolvedWorkingDirectory)
+    if ($entries.Count -eq 0) {
+        return @()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($CaseNumber)) {
+        return @($entries | Sort-Object -Property UpdatedAtUtc -Descending)
+    }
+
+    $entry = @(
+        $entries | Where-Object {
+            [string](Get-FogBugzCaseProgressEntryCaseNumber -CaseProgress $_) -eq [string]$CaseNumber
+        } | Select-Object -First 1
+    )
+
+    if ($entry.Count -eq 0) {
+        throw "No saved local progress found for case '$CaseNumber'."
+    }
+
+    $entry[0]
+}
+
+function Remove-FogBugzCaseProgress {
+    [CmdletBinding()]
+    param(
+        [string]$CaseNumber,
+
+        [switch]$All,
+
+        [string]$WorkingDirectory = (Get-Location).Path
+    )
+
+    if ($All -and -not [string]::IsNullOrWhiteSpace($CaseNumber)) {
+        throw 'Specify either -CaseNumber or -All, not both.'
+    }
+    if (-not $All -and [string]::IsNullOrWhiteSpace($CaseNumber)) {
+        throw 'CaseNumber is required unless -All is specified.'
+    }
+
+    $resolvedWorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
+    $entries = @(Read-FogBugzCaseProgressData -WorkingDirectory $resolvedWorkingDirectory)
+    if ($entries.Count -eq 0) {
+        throw "No local case progress entries found for '$resolvedWorkingDirectory'."
+    }
+
+    if ($All) {
+        Write-FogBugzCaseProgressData -WorkingDirectory $resolvedWorkingDirectory -CaseProgress @()
+        return [pscustomobject]@{
+            RemovedCaseNumber = $null
+            RemovedCount      = $entries.Count
+            RemainingCount    = 0
+        }
+    }
+
+    $remaining = @(
+        $entries | Where-Object {
+            [string](Get-FogBugzCaseProgressEntryCaseNumber -CaseProgress $_) -ne [string]$CaseNumber
+        }
+    )
+    $removedCount = $entries.Count - $remaining.Count
+    if ($removedCount -eq 0) {
+        throw "No saved local progress found for case '$CaseNumber'."
+    }
+
+    Write-FogBugzCaseProgressData -WorkingDirectory $resolvedWorkingDirectory -CaseProgress $remaining
+    [pscustomobject]@{
+        RemovedCaseNumber = [string]$CaseNumber
+        RemovedCount      = $removedCount
+        RemainingCount    = $remaining.Count
     }
 }
 
@@ -1115,5 +1368,8 @@ Set-Alias -Name fbrank -Value Get-FogBugzRankedCase
 Set-Alias -Name fbcase -Value Get-FogBugzCaseDetails
 Set-Alias -Name fbfilter -Value Resolve-FogBugzFilter
 Set-Alias -Name fbselect -Value Select-FogBugzCase
+Set-Alias -Name fbsaveprogress -Value Save-FogBugzCaseProgress
+Set-Alias -Name fbresume -Value Get-FogBugzCaseProgress
+Set-Alias -Name fbclearprogress -Value Remove-FogBugzCaseProgress
 
-Export-ModuleMember -Function Add-FogBugzCaseComment, Connect-FogBugzSession, Find-FogBugzCase, Get-FogBugzCaseDetails, Get-FogBugzCaseScore, Get-FogBugzRankedCase, Initialize-FogBugzSession, Resolve-FogBugzFilter, Select-FogBugzCase -Alias fblogin, fbconnect, fbpick, fbcomment, fbscore, fbrank, fbcase, fbfilter, fbselect
+Export-ModuleMember -Function Add-FogBugzCaseComment, Connect-FogBugzSession, Find-FogBugzCase, Get-FogBugzCaseDetails, Get-FogBugzCaseProgress, Get-FogBugzCaseScore, Get-FogBugzRankedCase, Initialize-FogBugzSession, Remove-FogBugzCaseProgress, Resolve-FogBugzFilter, Save-FogBugzCaseProgress, Select-FogBugzCase -Alias fblogin, fbconnect, fbpick, fbcomment, fbscore, fbrank, fbcase, fbfilter, fbselect, fbsaveprogress, fbresume, fbclearprogress

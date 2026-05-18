@@ -11,10 +11,13 @@
         'Connect-FogBugzSession'
         'Find-FogBugzCase'
         'Get-FogBugzCaseDetails'
+        'Get-FogBugzCaseProgress'
         'Get-FogBugzCaseScore'
         'Get-FogBugzRankedCase'
         'Initialize-FogBugzSession'
+        'Remove-FogBugzCaseProgress'
         'Resolve-FogBugzFilter'
+        'Save-FogBugzCaseProgress'
         'Select-FogBugzCase'
     )
     AliasesToExport   = @(
@@ -23,8 +26,11 @@
         'fbpick'
         'fbcomment'
         'fbcase'
+        'fbresume'
         'fbscore'
         'fbrank'
+        'fbsaveprogress'
+        'fbclearprogress'
         'fbfilter'
         'fbselect'
     )
