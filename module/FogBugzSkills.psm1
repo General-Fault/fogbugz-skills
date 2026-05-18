@@ -1,5 +1,89 @@
 Set-StrictMode -Version Latest
 
+if (-not ('FogBugzCredentialStore' -as [type])) {
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class FogBugzCredentialStore {
+    private const uint CRED_TYPE_GENERIC     = 1;
+    private const uint CRED_PERSIST_LOCAL_MACHINE = 2;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct CREDENTIAL {
+        public uint  Flags;
+        public uint  Type;
+        public string TargetName;
+        public string Comment;
+        public long  LastWritten;
+        public uint  CredentialBlobSize;
+        public IntPtr CredentialBlob;
+        public uint  Persist;
+        public uint  AttributeCount;
+        public IntPtr Attributes;
+        public string TargetAlias;
+        public string UserName;
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CredWrite([In] ref CREDENTIAL cred, uint flags);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CredRead(string target, uint type, uint flags, out IntPtr ptr);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool CredFree(IntPtr ptr);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CredDelete(string target, uint type, uint flags);
+
+    public static void Write(string target, string userName, string secret) {
+        if (secret == null) secret = string.Empty;
+        byte[] blob = Encoding.Unicode.GetBytes(secret);
+        IntPtr blobPtr = Marshal.AllocHGlobal(blob.Length);
+        try {
+            Marshal.Copy(blob, 0, blobPtr, blob.Length);
+            var cred = new CREDENTIAL {
+                Type               = CRED_TYPE_GENERIC,
+                TargetName         = target,
+                Comment            = "FogBugzSkills",
+                CredentialBlobSize = (uint)blob.Length,
+                CredentialBlob     = blobPtr,
+                Persist            = CRED_PERSIST_LOCAL_MACHINE,
+                UserName           = userName
+            };
+            if (!CredWrite(ref cred, 0))
+                throw new InvalidOperationException("CredWrite failed: " + Marshal.GetLastWin32Error());
+        } finally {
+            Marshal.FreeHGlobal(blobPtr);
+        }
+    }
+
+    public static string[] Read(string target) {
+        IntPtr ptr = IntPtr.Zero;
+        try {
+            if (!CredRead(target, CRED_TYPE_GENERIC, 0, out ptr)) return null;
+            var cred = (CREDENTIAL)Marshal.PtrToStructure(ptr, typeof(CREDENTIAL));
+            string secret = null;
+            if (cred.CredentialBlob != IntPtr.Zero && cred.CredentialBlobSize > 0) {
+                byte[] blob = new byte[cred.CredentialBlobSize];
+                Marshal.Copy(cred.CredentialBlob, blob, 0, blob.Length);
+                secret = Encoding.Unicode.GetString(blob).TrimEnd('\0');
+            }
+            return new[] { cred.UserName ?? string.Empty, secret ?? string.Empty };
+        } finally {
+            if (ptr != IntPtr.Zero) CredFree(ptr);
+        }
+    }
+
+    public static void Delete(string target) {
+        CredDelete(target, CRED_TYPE_GENERIC, 0);
+    }
+}
+'@ -Language CSharp
+}
+
 function ConvertTo-FogBugzPlainText {
     param(
         [Parameter(Mandatory)]
@@ -17,77 +101,55 @@ function ConvertTo-FogBugzPlainText {
     }
 }
 
-function Get-FogBugzSessionCachePath {
-    param(
-        [string]$CachePath
-    )
-
-    if (-not [string]::IsNullOrWhiteSpace($CachePath)) {
-        return $CachePath
-    }
-
-    $root = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $HOME }
-    Join-Path $root 'FogBugzSkills\session.xml'
-}
-
-function Get-FogBugzStoreRoot {
-    $root = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $HOME }
-    Join-Path $root 'FogBugzSkills'
-}
-
-function Get-FogBugzContextKey {
+# .fogbugz config file — stores BaseUri for the working directory tree
+function Get-FogBugzConfigPath {
     param(
         [Parameter(Mandatory)]
         [string]$WorkingDirectory
     )
 
-    $normalized = [IO.Path]::GetFullPath($WorkingDirectory).TrimEnd('\').ToLowerInvariant()
-    $bytes = [Text.Encoding]::UTF8.GetBytes($normalized)
-    $hasher = [Security.Cryptography.SHA256]::Create()
-    try {
-        $hash = $hasher.ComputeHash($bytes)
+    $dir = [IO.Path]::GetFullPath($WorkingDirectory)
+    while ($dir) {
+        $candidate = Join-Path $dir '.fogbugz'
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+        $parent = Split-Path -Parent $dir
+        if ($parent -eq $dir) { break }
+        $dir = $parent
     }
-    finally {
-        $hasher.Dispose()
-    }
-    -join ($hash | ForEach-Object { $_.ToString('x2') })
+    $null
 }
 
-function Get-FogBugzContextPath {
+function Read-FogBugzConfig {
     param(
         [Parameter(Mandatory)]
         [string]$WorkingDirectory
     )
 
-    $storeRoot = Get-FogBugzStoreRoot
-    Join-Path $storeRoot ('context-' + (Get-FogBugzContextKey -WorkingDirectory $WorkingDirectory) + '.json')
+    $path = Get-FogBugzConfigPath -WorkingDirectory $WorkingDirectory
+    if (-not $path) { return $null }
+    $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    [pscustomobject]@{
+        BaseUri = [string]$data.BaseUri
+        Path    = $path
+    }
 }
 
-function Protect-FogBugzToken {
-    param(
-        [Parameter(Mandatory)]
-        [string]$Token
-    )
-
-    $secureToken = ConvertTo-SecureString -String $Token -AsPlainText -Force
-    ConvertFrom-SecureString -SecureString $secureToken
-}
-
-function Unprotect-FogBugzToken {
-    param(
-        [Parameter(Mandatory)]
-        [string]$ProtectedToken
-    )
-
-    $secureToken = ConvertTo-SecureString -String $ProtectedToken
-    ConvertTo-FogBugzPlainText -SecureString $secureToken
-}
-
-function Set-FogBugzAuthContext {
+function Write-FogBugzConfig {
     param(
         [Parameter(Mandatory)]
         [string]$WorkingDirectory,
 
+        [Parameter(Mandatory)]
+        [string]$BaseUri
+    )
+
+    $path = Join-Path ([IO.Path]::GetFullPath($WorkingDirectory)) '.fogbugz'
+    @{ BaseUri = $BaseUri.Trim() } | ConvertTo-Json | Set-Content -LiteralPath $path -Encoding UTF8
+}
+
+# Windows Credential Manager — stores UserName + Token keyed by FogBugz:<BaseUri>
+function Set-FogBugzCredential {
+    param(
         [Parameter(Mandatory)]
         [string]$BaseUri,
 
@@ -98,46 +160,68 @@ function Set-FogBugzAuthContext {
         [string]$Token
     )
 
-    $path = Get-FogBugzContextPath -WorkingDirectory $WorkingDirectory
-    $storeRoot = Split-Path -Parent $path
-    if (-not (Test-Path -LiteralPath $storeRoot -PathType Container)) {
-        New-Item -ItemType Directory -Path $storeRoot -Force | Out-Null
-    }
-
-    $context = [pscustomobject]@{
-        Version          = 1
-        WorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
-        BaseUri          = $BaseUri.Trim()
-        UserName         = $UserName
-        TokenProtected   = Protect-FogBugzToken -Token $Token
-        UpdatedAtUtc     = [datetime]::UtcNow.ToString('o')
-    }
-
-    $context | ConvertTo-Json | Set-Content -LiteralPath $path -Encoding UTF8
+    [FogBugzCredentialStore]::Write("FogBugz:$($BaseUri.Trim())", $UserName, $Token)
 }
 
-function Get-FogBugzAuthContext {
+function Get-FogBugzCredential {
     param(
         [Parameter(Mandatory)]
-        [string]$WorkingDirectory
+        [string]$BaseUri
     )
 
-    $path = Get-FogBugzContextPath -WorkingDirectory $WorkingDirectory
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        return $null
+    $result = [FogBugzCredentialStore]::Read("FogBugz:$($BaseUri.Trim())")
+    if ($null -eq $result) { return $null }
+    [pscustomobject]@{ UserName = $result[0]; Token = $result[1] }
+}
+
+function Remove-FogBugzCredential {
+    param(
+        [Parameter(Mandatory)]
+        [string]$BaseUri
+    )
+
+    [FogBugzCredentialStore]::Delete("FogBugz:$($BaseUri.Trim())")
+}
+
+function Set-FogBugzSelectedCase {
+    param(
+        [string]$WorkingDirectory = (Get-Location).Path,
+
+        [Parameter(Mandatory)]
+        [object]$Case
+    )
+
+    $caseId = [string](Get-FogBugzResponseValue -InputObject $Case -Name 'Id')
+    if ([string]::IsNullOrWhiteSpace($caseId)) {
+        $caseId = [string](Get-FogBugzResponseValue -InputObject $Case -Name 'ixBug')
+    }
+    if ([string]::IsNullOrWhiteSpace($caseId)) {
+        throw 'Case.Id is required to store the current FogBugz selection.'
     }
 
-    $stored = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-    if ($null -eq $stored -or [string]::IsNullOrWhiteSpace($stored.TokenProtected)) {
-        return $null
+    $caseTitle = [string](Get-FogBugzResponseValue -InputObject $Case -Name 'Title')
+    if ([string]::IsNullOrWhiteSpace($caseTitle)) {
+        $caseTitle = [string](Get-FogBugzResponseValue -InputObject $Case -Name 'sTitle')
     }
 
+    $env:FOGBUGZ_SELECTED_CASE = [pscustomobject]@{
+        Id           = $caseId
+        Title        = $caseTitle
+        UpdatedAtUtc = [datetime]::UtcNow.ToString('o')
+    } | ConvertTo-Json -Compress
+}
+
+function Get-FogBugzSelectedCase {
+    param(
+        [string]$WorkingDirectory = (Get-Location).Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($env:FOGBUGZ_SELECTED_CASE)) { return $null }
+    $data = $env:FOGBUGZ_SELECTED_CASE | ConvertFrom-Json
     [pscustomobject]@{
-        BaseUri          = [string]$stored.BaseUri
-        Token            = Unprotect-FogBugzToken -ProtectedToken ([string]$stored.TokenProtected)
-        UserName         = [string]$stored.UserName
-        WorkingDirectory = [string]$stored.WorkingDirectory
-        CachePath        = $path
+        Id           = [string]$data.Id
+        Title        = [string]$data.Title
+        UpdatedAtUtc = [string]$data.UpdatedAtUtc
     }
 }
 
@@ -175,6 +259,70 @@ function Invoke-FogBugzApi {
     }
 
     $response
+}
+
+function Invoke-FogBugzMultipartApi {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$BaseUri,
+
+        [Parameter(Mandatory)]
+        [string]$Command,
+
+        [string]$Token,
+
+        [hashtable]$Parameter = @{},
+
+        [object[]]$File = @()
+    )
+
+    $client = [System.Net.Http.HttpClient]::new()
+    $multipart = [System.Net.Http.MultipartFormDataContent]::new()
+    try {
+        $multipart.Add([System.Net.Http.StringContent]::new($Command), 'cmd')
+
+        if (-not [string]::IsNullOrWhiteSpace($Token)) {
+            $multipart.Add([System.Net.Http.StringContent]::new($Token), 'token')
+        }
+
+        foreach ($key in ($Parameter.Keys | Sort-Object)) {
+            $value = [string]$Parameter[$key]
+            $multipart.Add([System.Net.Http.StringContent]::new($value), $key)
+        }
+
+        $index = 1
+        foreach ($item in $File) {
+            $fileInfo = [System.IO.FileInfo]$item
+            $bytes = [System.IO.File]::ReadAllBytes($fileInfo.FullName)
+            $fileContent = [System.Net.Http.ByteArrayContent]::new($bytes)
+            $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse('application/octet-stream')
+            $multipart.Add($fileContent, "File$index", $fileInfo.Name)
+            $index++
+        }
+
+        if ($File.Count -gt 0) {
+            $multipart.Add([System.Net.Http.StringContent]::new([string]$File.Count), 'nFileCount')
+        }
+
+        $response = $client.PostAsync(([Uri]::new($BaseUri.TrimEnd('/') + '/api.asp')), $multipart).GetAwaiter().GetResult()
+        $body = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        if (-not $response.IsSuccessStatusCode) {
+            throw "FogBugz API error for cmd '$Command': $([int]$response.StatusCode) $($response.ReasonPhrase)"
+        }
+
+        $xml = [xml]$body
+        $errorMessage = Get-FogBugzResponseValue -InputObject $xml -Name 'Error'
+        if (-not [string]::IsNullOrWhiteSpace($errorMessage)) {
+            throw "FogBugz API error for cmd '$Command': $errorMessage"
+        }
+
+        $xml
+    }
+    finally {
+        if ($multipart) { $multipart.Dispose() }
+        if ($client) { $client.Dispose() }
+    }
 }
 
 function Get-FogBugzResponseValue {
@@ -667,7 +815,9 @@ function Get-FogBugzCaseDetails {
     $result['Attachments'] = $attachments
     $result['ContextSummary'] = "Loaded $($comments.Count) comments and $($attachments.Count) attachments."
 
-    [pscustomobject]$result
+    $caseDetails = [pscustomobject]$result
+    Set-FogBugzSelectedCase -WorkingDirectory $WorkingDirectory -Case $caseDetails
+    $caseDetails
 }
 
 function Select-FogBugzCase {
@@ -711,50 +861,37 @@ function Connect-FogBugzSession {
     param(
         [string]$BaseUri = $env:FOGBUGZ_BASE_URI,
 
-        [string]$CachePath,
-
         [string]$WorkingDirectory = (Get-Location).Path,
 
         [switch]$PromptForCredentials
     )
 
     $resolvedWorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
-    $context = Get-FogBugzAuthContext -WorkingDirectory $resolvedWorkingDirectory
-    if ($context -and $context.Token) {
-        if ([string]::IsNullOrWhiteSpace($BaseUri) -or $context.BaseUri -ieq $BaseUri) {
-            return $context
-        }
-    }
 
-    if (-not [string]::IsNullOrWhiteSpace($CachePath)) {
-        $resolvedCachePath = Get-FogBugzSessionCachePath -CachePath $CachePath
-        if (Test-Path -LiteralPath $resolvedCachePath -PathType Leaf) {
-            $cached = Import-Clixml -LiteralPath $resolvedCachePath
-            if ($cached -and $cached.Token) {
-                $legacyBaseUri = if ($cached.BaseUri) { [string]$cached.BaseUri } else { [string]$BaseUri }
-                Set-FogBugzAuthContext -WorkingDirectory $resolvedWorkingDirectory -BaseUri $legacyBaseUri -UserName ([string]$cached.UserName) -Token ([string]$cached.Token)
-                return (Get-FogBugzAuthContext -WorkingDirectory $resolvedWorkingDirectory)
+    $config = Read-FogBugzConfig -WorkingDirectory $resolvedWorkingDirectory
+    $resolvedBaseUri = if (-not [string]::IsNullOrWhiteSpace($BaseUri)) { $BaseUri } elseif ($config) { $config.BaseUri } else { $null }
+
+    if (-not [string]::IsNullOrWhiteSpace($resolvedBaseUri)) {
+        $cred = Get-FogBugzCredential -BaseUri $resolvedBaseUri
+        if ($cred -and -not [string]::IsNullOrWhiteSpace($cred.Token)) {
+            return [pscustomobject]@{
+                BaseUri          = $resolvedBaseUri
+                Token            = $cred.Token
+                UserName         = $cred.UserName
+                WorkingDirectory = $resolvedWorkingDirectory
             }
         }
     }
 
     if ($PromptForCredentials) {
-        return Initialize-FogBugzSession -BaseUri $BaseUri -WorkingDirectory $resolvedWorkingDirectory -CachePath $CachePath
+        return Initialize-FogBugzSession -BaseUri $resolvedBaseUri -WorkingDirectory $resolvedWorkingDirectory
     }
 
-    if ($context -and $context.BaseUri -and -not [string]::IsNullOrWhiteSpace($BaseUri) -and $context.BaseUri -ine $BaseUri) {
-        throw "Stored FogBugz session for '$resolvedWorkingDirectory' targets '$($context.BaseUri)'. Re-run Initialize-FogBugzSession with the new tenant."
+    if ([string]::IsNullOrWhiteSpace($resolvedBaseUri)) {
+        throw "No .fogbugz config found at or above '$resolvedWorkingDirectory'. Run Initialize-FogBugzSession (alias: fblogin)."
     }
 
-    if ([string]::IsNullOrWhiteSpace($BaseUri)) {
-        throw "No FogBugz session was found for '$resolvedWorkingDirectory'. Run Initialize-FogBugzSession (alias: fblogin)."
-    }
-
-    if ($context -and $context.BaseUri -and $context.BaseUri -ieq $BaseUri) {
-        return $context
-    }
-
-    throw "No FogBugz session was found for '$resolvedWorkingDirectory'. Run Initialize-FogBugzSession (alias: fblogin)."
+    throw "No FogBugz credential found for '$resolvedBaseUri'. Run Initialize-FogBugzSession (alias: fblogin)."
 }
 
 function Initialize-FogBugzSession {
@@ -764,12 +901,16 @@ function Initialize-FogBugzSession {
 
         [string]$WorkingDirectory = (Get-Location).Path,
 
-        [string]$CachePath,
-
         [pscredential]$Credential
     )
 
     $resolvedWorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
+
+    if ([string]::IsNullOrWhiteSpace($BaseUri)) {
+        $config = Read-FogBugzConfig -WorkingDirectory $resolvedWorkingDirectory
+        if ($config) { $BaseUri = $config.BaseUri }
+    }
+
     if ([string]::IsNullOrWhiteSpace($BaseUri)) {
         $BaseUri = Read-Host 'Enter FogBugz tenant URI (example: https://yourtenant.fogbugz.com)'
     }
@@ -792,24 +933,15 @@ function Initialize-FogBugzSession {
         throw 'FogBugz did not return a session token.'
     }
 
-    Set-FogBugzAuthContext -WorkingDirectory $resolvedWorkingDirectory -BaseUri $BaseUri -UserName $Credential.UserName -Token $token
+    Write-FogBugzConfig -WorkingDirectory $resolvedWorkingDirectory -BaseUri $BaseUri
+    Set-FogBugzCredential -BaseUri $BaseUri -UserName $Credential.UserName -Token $token
 
-    if (-not [string]::IsNullOrWhiteSpace($CachePath)) {
-        $resolvedCachePath = Get-FogBugzSessionCachePath -CachePath $CachePath
-        $cacheDir = Split-Path -Parent $resolvedCachePath
-        if (-not (Test-Path -LiteralPath $cacheDir -PathType Container)) {
-            New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
-        }
-
-        [pscustomobject]@{
-            BaseUri   = $BaseUri
-            Token     = $token
-            UserName  = $Credential.UserName
-            CachePath = $resolvedCachePath
-        } | Export-Clixml -LiteralPath $resolvedCachePath
+    [pscustomobject]@{
+        BaseUri          = $BaseUri
+        Token            = $token
+        UserName         = $Credential.UserName
+        WorkingDirectory = $resolvedWorkingDirectory
     }
-
-    Get-FogBugzAuthContext -WorkingDirectory $resolvedWorkingDirectory
 }
 
 function Find-FogBugzCase {
@@ -817,8 +949,7 @@ function Find-FogBugzCase {
     param(
         [string]$BaseUri = $env:FOGBUGZ_BASE_URI,
 
-        [string]$CachePath,
-
+        [Parameter(Position = 0)]
         [string]$FilterName,
 
         [int]$Top = 5,
@@ -828,7 +959,7 @@ function Find-FogBugzCase {
         [string]$WorkingDirectory = (Get-Location).Path
     )
 
-    $session = Connect-FogBugzSession -BaseUri $BaseUri -CachePath $CachePath -WorkingDirectory $WorkingDirectory
+    $session = Connect-FogBugzSession -BaseUri $BaseUri -WorkingDirectory $WorkingDirectory
     $cases = @(Get-FogBugzCaseFeed -Session $session -FilterName $FilterName)
     if ($cases.Count -eq 0) {
         throw 'No FogBugz cases matched the selected criteria.'
@@ -843,13 +974,146 @@ function Find-FogBugzCase {
     $ranked
 }
 
+function Resolve-FogBugzAttachmentPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string[]]$AttachmentPath
+    )
+
+    $resolved = New-Object System.Collections.Generic.List[object]
+    $seen = @()
+
+    foreach ($path in $AttachmentPath) {
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        $item = Get-Item -LiteralPath $path -ErrorAction Stop
+        if ($item.PSIsContainer) {
+            Write-Warning "Directory attachment '$($item.FullName)' will upload top-level files only."
+            $children = @(Get-ChildItem -LiteralPath $item.FullName -File -Force -ErrorAction Stop)
+            $excluded = @(
+                $children | Where-Object {
+                    (([int]$_.Attributes -band [int][System.IO.FileAttributes]::Hidden) -ne 0) -or
+                    (([int]$_.Attributes -band [int][System.IO.FileAttributes]::System) -ne 0)
+                }
+            )
+            if ($excluded.Count -gt 0) {
+                Write-Warning "Skipping $($excluded.Count) hidden or system file(s) in '$($item.FullName)'."
+            }
+
+            foreach ($child in $children) {
+                if (
+                    (([int]$child.Attributes -band [int][System.IO.FileAttributes]::Hidden) -ne 0) -or
+                    (([int]$child.Attributes -band [int][System.IO.FileAttributes]::System) -ne 0)
+                ) {
+                    continue
+                }
+
+                if ($seen -notcontains $child.FullName) {
+                    $seen += $child.FullName
+                    $resolved.Add($child)
+                }
+            }
+            continue
+        }
+
+        if ($seen -notcontains $item.FullName) {
+            $seen += $item.FullName
+            $resolved.Add($item)
+        }
+    }
+
+    if ($resolved.Count -eq 0) {
+        throw 'No uploadable attachments were found.'
+    }
+
+    $resolved.ToArray()
+}
+
+function Add-FogBugzCaseComment {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [string]$Comment,
+
+        [string]$CaseNumber,
+
+        [Alias('Attachments')]
+        [string[]]$AttachmentPath,
+
+        [pscustomobject]$Session,
+
+        [string]$WorkingDirectory = (Get-Location).Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Comment)) {
+        throw 'Comment is required.'
+    }
+
+    $resolvedWorkingDirectory = [IO.Path]::GetFullPath($WorkingDirectory)
+    if ($null -eq $Session) {
+        $Session = Connect-FogBugzSession -WorkingDirectory $resolvedWorkingDirectory
+    }
+
+    $targetCase = $null
+    if (-not [string]::IsNullOrWhiteSpace($CaseNumber)) {
+        $targetCase = Get-FogBugzCaseDetails -Session $Session -CaseNumber $CaseNumber -WorkingDirectory $resolvedWorkingDirectory
+    }
+    else {
+        $targetCase = Get-FogBugzSelectedCase -WorkingDirectory $resolvedWorkingDirectory
+        if ($null -eq $targetCase) {
+            throw "No current FogBugz case is selected for '$resolvedWorkingDirectory'. Run fbpick or pass -CaseNumber."
+        }
+    }
+
+    $attachmentFiles = @()
+    if ($AttachmentPath) {
+        $attachmentFiles = @(Resolve-FogBugzAttachmentPath -AttachmentPath $AttachmentPath)
+    }
+
+    $targetLabel = "case $($targetCase.Id)"
+    if (-not [string]::IsNullOrWhiteSpace([string]$targetCase.Title)) {
+        $targetLabel += " - $($targetCase.Title)"
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($targetLabel, 'Post FogBugz comment')) {
+        return
+    }
+
+    $parameter = @{
+        ixBug      = [string]$targetCase.Id
+        sEvent     = $Comment
+        fRichText  = '0'
+    }
+
+    $response = Invoke-FogBugzMultipartApi -BaseUri $Session.BaseUri -Command 'edit' -Token $Session.Token -Parameter $parameter -File $attachmentFiles
+    $updatedCase = @(ConvertFrom-FogBugzCase -InputObject $response) | Select-Object -First 1
+    if ($updatedCase) {
+        Set-FogBugzSelectedCase -WorkingDirectory $resolvedWorkingDirectory -Case $updatedCase
+    }
+    else {
+        Set-FogBugzSelectedCase -WorkingDirectory $resolvedWorkingDirectory -Case $targetCase
+    }
+
+    [pscustomobject]@{
+        CaseNumber      = [string]$targetCase.Id
+        Title           = [string]$targetCase.Title
+        Comment         = $Comment
+        AttachmentCount = $attachmentFiles.Count
+        Attachments     = @($attachmentFiles | ForEach-Object { $_.Name })
+    }
+}
+
 Set-Alias -Name fblogin -Value Initialize-FogBugzSession
 Set-Alias -Name fbconnect -Value Connect-FogBugzSession
 Set-Alias -Name fbpick -Value Find-FogBugzCase
+Set-Alias -Name fbcomment -Value Add-FogBugzCaseComment
 Set-Alias -Name fbscore -Value Get-FogBugzCaseScore
 Set-Alias -Name fbrank -Value Get-FogBugzRankedCase
 Set-Alias -Name fbcase -Value Get-FogBugzCaseDetails
 Set-Alias -Name fbfilter -Value Resolve-FogBugzFilter
 Set-Alias -Name fbselect -Value Select-FogBugzCase
 
-Export-ModuleMember -Function Connect-FogBugzSession, Find-FogBugzCase, Get-FogBugzCaseDetails, Get-FogBugzCaseScore, Get-FogBugzRankedCase, Initialize-FogBugzSession, Resolve-FogBugzFilter, Select-FogBugzCase -Alias fblogin, fbconnect, fbpick, fbscore, fbrank, fbcase, fbfilter, fbselect
+Export-ModuleMember -Function Add-FogBugzCaseComment, Connect-FogBugzSession, Find-FogBugzCase, Get-FogBugzCaseDetails, Get-FogBugzCaseScore, Get-FogBugzRankedCase, Initialize-FogBugzSession, Resolve-FogBugzFilter, Select-FogBugzCase -Alias fblogin, fbconnect, fbpick, fbcomment, fbscore, fbrank, fbcase, fbfilter, fbselect
