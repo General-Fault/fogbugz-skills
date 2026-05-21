@@ -140,9 +140,54 @@ Posts a comment to a FogBugz case, with optional attachments.
 | `-Session <psobject>` | No | Pre-resolved session object. If omitted, stored session context is used. |
 | `-WorkingDirectory <string>` | No | Directory key for local auth/selected-case context. |
 
-### Get-FogBugzCaseScore
+### New-FogBugzCaseBranch
 
-Scores a single case for ranking and returns explanation metadata.
+Creates and checks out a new git branch for a FogBugz case.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-CaseNumber <string>` | Yes | FogBugz case ID used in the branch name. |
+| `-Description <string>` | Yes | Short description slug appended after the case number. |
+| `-WorkingDirectory <string>` | No | Directory where the git command is run. |
+
+### Save-FogBugzCaseProgress
+
+Saves local handoff progress for the currently selected case to `.fogbugz\case-progress.json`.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-WorkSummary <string>` | Yes | Concise paragraph describing completed work. |
+| `-CaseNumber <string>` | No | Case ID to save progress for. Resolved from selected case when omitted. |
+| `-Title <string>` | No | Case title. Resolved from selected case when omitted. |
+| `-Status <string>` | No | Current local status label. |
+| `-Branch <string>` | No | Current branch. Resolved from git when omitted. |
+| `-Changes <object[]>` | No | Array of `@{ Path; Intent }` objects describing changed files. |
+| `-TestsRun <object[]>` | No | Array of `@{ Command; Result }` objects for tests executed. |
+| `-OpenQuestions <string[]>` | No | Unresolved unknowns or blockers. |
+| `-NextSteps <string[]>` | No | Ordered continuation steps for the next agent. |
+| `-Artifacts <string[]>` | No | Useful local paths or links. |
+| `-WorkingDirectory <string>` | No | Directory key for reading selected case and writing progress. |
+
+### Get-FogBugzCaseProgress
+
+Reads saved local case progress from `.fogbugz\case-progress.json`.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-CaseNumber <string>` | No | Returns the entry for this specific case. If omitted, returns all entries sorted newest-first. |
+| `-WorkingDirectory <string>` | No | Directory to search for `.fogbugz\case-progress.json`. |
+
+### Remove-FogBugzCaseProgress
+
+Removes one or all local case progress entries from `.fogbugz\case-progress.json`.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-CaseNumber <string>` | No | Case ID to remove. |
+| `-All` | No | Remove all entries. Mutually exclusive with `-CaseNumber`. |
+| `-WorkingDirectory <string>` | No | Directory containing `.fogbugz\case-progress.json`. |
+
+
 
 | Parameter | Required | Description |
 | --- | --- | --- |
@@ -185,6 +230,9 @@ Performs explicit case selection from ranked candidates.
 - `fbrank` -> `Get-FogBugzRankedCase`
 - `fbfilter` -> `Resolve-FogBugzFilter`
 - `fbselect` -> `Select-FogBugzCase`
+- `fbsaveprogress` -> `Save-FogBugzCaseProgress`
+- `fbresume` -> `Get-FogBugzCaseProgress`
+- `fbclearprogress` -> `Remove-FogBugzCaseProgress`
 
 ## Notes for contributors
 
