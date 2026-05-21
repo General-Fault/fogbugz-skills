@@ -4,7 +4,7 @@ Copilot skills plus a PowerShell module for running a FogBugz case workflow end-
 
 ## Why this project exists
 
-This repository exists to make FogBugz case work predictable inside AI-assisted development:
+This repository exists to integrate FogBugz into your AI-assisted development workflow:
 
 1. Pick a FogBugz case from your queue.
 2. Create a correctly named case branch and start work.
