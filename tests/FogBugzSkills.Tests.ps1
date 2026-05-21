@@ -226,6 +226,28 @@ Describe 'FogBugzSkills' {
             }
         }
 
+        It 'loads all expected public commands from the module' {
+            $expected = @(
+                'Add-FogBugzCaseComment'
+                'Connect-FogBugzSession'
+                'Find-FogBugzCase'
+                'Get-FogBugzCaseDetails'
+                'Get-FogBugzCaseScore'
+                'Get-FogBugzRankedCase'
+                'Initialize-FogBugzSession'
+                'New-FogBugzCaseBranch'
+                'Resolve-FogBugzFilter'
+                'Select-FogBugzCase'
+            ) | Sort-Object
+
+            $actual = Get-Command -Module FogBugzSkills -CommandType Function |
+                Select-Object -ExpandProperty Name |
+                Sort-Object
+
+            $actual.Count | Should -Be $expected.Count
+            (Compare-Object -ReferenceObject $expected -DifferenceObject $actual) | Should -BeNullOrEmpty
+        }
+
         It 'exports expected alias-command mappings' {
             $expected = @{
                 fblogin   = 'Initialize-FogBugzSession'

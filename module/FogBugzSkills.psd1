@@ -14,6 +14,7 @@
         'Get-FogBugzCaseScore'
         'Get-FogBugzRankedCase'
         'Initialize-FogBugzSession'
+        'New-FogBugzCaseBranch'
         'Resolve-FogBugzFilter'
         'Select-FogBugzCase'
     )
