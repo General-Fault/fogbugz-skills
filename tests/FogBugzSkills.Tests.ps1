@@ -136,6 +136,69 @@ Describe 'FogBugzSkills' {
         }
     }
 
+    Context 'New-FogBugzCaseBranch' {
+        BeforeEach {
+            $script:BranchTempRoot = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
+            New-Item -ItemType Directory -Path $script:BranchTempRoot -Force | Out-Null
+        }
+
+        AfterEach {
+            if (Test-Path -LiteralPath $script:BranchTempRoot) {
+                Remove-Item -LiteralPath $script:BranchTempRoot -Recurse -Force
+            }
+        }
+
+        It 'creates and checks out the requested case branch' {
+            InModuleScope FogBugzSkills -Parameters @{ RepoRoot = $script:BranchTempRoot } {
+                param($RepoRoot)
+
+                Push-Location $RepoRoot
+                try {
+                    git init --quiet
+                    $result = New-FogBugzCaseBranch -CaseNumber '14630' -Description 'fix-login-flow'
+                    $result.BranchName | Should -Be 'cases/14630-fix-login-flow'
+                    $result.CaseNumber | Should -Be '14630'
+                    (git branch --show-current) | Should -Be 'cases/14630-fix-login-flow'
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+
+        It 'throws when the exact target branch already exists' {
+            InModuleScope FogBugzSkills -Parameters @{ RepoRoot = $script:BranchTempRoot } {
+                param($RepoRoot)
+
+                Push-Location $RepoRoot
+                try {
+                    git init --quiet
+                    [void](New-FogBugzCaseBranch -CaseNumber '14630' -Description 'fix-login-flow')
+                    { New-FogBugzCaseBranch -CaseNumber '14630' -Description 'fix-login-flow' } | Should -Throw '*Branch already exists*'
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+
+        It 'throws when another branch exists for the same case number' {
+            InModuleScope FogBugzSkills -Parameters @{ RepoRoot = $script:BranchTempRoot } {
+                param($RepoRoot)
+
+                Push-Location $RepoRoot
+                try {
+                    git init --quiet
+                    [void](New-FogBugzCaseBranch -CaseNumber '14630' -Description 'fix-login-flow')
+                    { New-FogBugzCaseBranch -CaseNumber '14630' -Description 'update-docs' } | Should -Throw '*Another branch already exists for case 14630*'
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+    }
+
     Context 'Auth bootstrap workflow' {
         BeforeEach {
             $script:TempRoot = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
