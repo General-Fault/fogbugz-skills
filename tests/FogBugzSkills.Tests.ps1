@@ -232,11 +232,14 @@ Describe 'FogBugzSkills' {
                 'Connect-FogBugzSession'
                 'Find-FogBugzCase'
                 'Get-FogBugzCaseDetails'
+                'Get-FogBugzCaseProgress'
                 'Get-FogBugzCaseScore'
                 'Get-FogBugzRankedCase'
                 'Initialize-FogBugzSession'
                 'New-FogBugzCaseBranch'
+                'Remove-FogBugzCaseProgress'
                 'Resolve-FogBugzFilter'
+                'Save-FogBugzCaseProgress'
                 'Select-FogBugzCase'
             ) | Sort-Object
 
@@ -250,15 +253,18 @@ Describe 'FogBugzSkills' {
 
         It 'exports expected alias-command mappings' {
             $expected = @{
-                fblogin   = 'Initialize-FogBugzSession'
-                fbconnect = 'Connect-FogBugzSession'
-                fbpick    = 'Find-FogBugzCase'
-                fbcomment = 'Add-FogBugzCaseComment'
-                fbcase    = 'Get-FogBugzCaseDetails'
-                fbscore   = 'Get-FogBugzCaseScore'
-                fbrank    = 'Get-FogBugzRankedCase'
-                fbfilter  = 'Resolve-FogBugzFilter'
-                fbselect  = 'Select-FogBugzCase'
+                fblogin         = 'Initialize-FogBugzSession'
+                fbconnect       = 'Connect-FogBugzSession'
+                fbpick          = 'Find-FogBugzCase'
+                fbcomment       = 'Add-FogBugzCaseComment'
+                fbcase          = 'Get-FogBugzCaseDetails'
+                fbresume        = 'Get-FogBugzCaseProgress'
+                fbscore         = 'Get-FogBugzCaseScore'
+                fbrank          = 'Get-FogBugzRankedCase'
+                fbsaveprogress  = 'Save-FogBugzCaseProgress'
+                fbclearprogress = 'Remove-FogBugzCaseProgress'
+                fbfilter        = 'Resolve-FogBugzFilter'
+                fbselect        = 'Select-FogBugzCase'
             }
 
             foreach ($name in $expected.Keys) {
@@ -618,6 +624,85 @@ Describe 'FogBugzSkills' {
 
                 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
                 $config.BaseUri | Should -Be 'https://yourtenant.fogbugz.com'
+            }
+        }
+    }
+
+    Context 'Case progress workflow' {
+        BeforeEach {
+            $script:TempRoot = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
+            $script:WorkDir = Join-Path $script:TempRoot 'scriptcenter'
+            New-Item -ItemType Directory -Path $script:WorkDir -Force | Out-Null
+            $env:FOGBUGZ_SELECTED_CASE = $null
+        }
+
+        AfterEach {
+            $env:FOGBUGZ_SELECTED_CASE = $null
+            if (Test-Path -LiteralPath $script:TempRoot) {
+                Remove-Item -LiteralPath $script:TempRoot -Recurse -Force
+            }
+        }
+
+        It 'saves and retrieves local case progress' {
+            InModuleScope FogBugzSkills -Parameters @{ WorkDir = $script:WorkDir } {
+                param($WorkDir)
+
+                Set-FogBugzSelectedCase -WorkingDirectory $WorkDir -Case ([pscustomobject]@{ Id = '14630'; Title = 'Selected case' })
+                $changes = @([pscustomobject]@{ Path = 'module\FogBugzSkills.psm1'; Intent = 'Added local handoff persistence.' })
+                $tests = @([pscustomobject]@{ Command = 'Invoke-Pester -Path .\tests\FogBugzSkills.Tests.ps1'; Result = 'Pass' })
+                [void](Save-FogBugzCaseProgress -WorkingDirectory $WorkDir -WorkSummary 'Added local case progress support.' -Status 'In Progress' -Changes $changes -TestsRun $tests -NextSteps @('Create resume skill prompt'))
+
+                $entry = Get-FogBugzCaseProgress -WorkingDirectory $WorkDir -CaseNumber '14630'
+                $entry.CaseNumber | Should -Be '14630'
+                $entry.Title | Should -Be 'Selected case'
+                $entry.WorkSummary | Should -Be 'Added local case progress support.'
+                @($entry.Changes).Count | Should -Be 1
+                @($entry.TestsRun).Count | Should -Be 1
+                @($entry.NextSteps).Count | Should -Be 1
+
+                $progressPath = Join-Path $WorkDir '.fogbugz\case-progress.json'
+                Test-Path -LiteralPath $progressPath -PathType Leaf | Should -BeTrue
+            }
+        }
+
+        It 'removes one case progress entry while preserving others' {
+            InModuleScope FogBugzSkills -Parameters @{ WorkDir = $script:WorkDir } {
+                param($WorkDir)
+
+                [void](Save-FogBugzCaseProgress -WorkingDirectory $WorkDir -CaseNumber '14630' -Title 'Case A' -WorkSummary 'A')
+                [void](Save-FogBugzCaseProgress -WorkingDirectory $WorkDir -CaseNumber '14631' -Title 'Case B' -WorkSummary 'B')
+
+                $result = Remove-FogBugzCaseProgress -WorkingDirectory $WorkDir -CaseNumber '14630'
+                $result.RemovedCount | Should -Be 1
+                $result.RemainingCount | Should -Be 1
+
+                $all = @(Get-FogBugzCaseProgress -WorkingDirectory $WorkDir)
+                $all.Count | Should -Be 1
+                $all[0].CaseNumber | Should -Be '14631'
+            }
+        }
+
+        It 'supports explicit remove-all for case progress' {
+            InModuleScope FogBugzSkills -Parameters @{ WorkDir = $script:WorkDir } {
+                param($WorkDir)
+
+                [void](Save-FogBugzCaseProgress -WorkingDirectory $WorkDir -CaseNumber '14630' -Title 'Case A' -WorkSummary 'A')
+                [void](Save-FogBugzCaseProgress -WorkingDirectory $WorkDir -CaseNumber '14631' -Title 'Case B' -WorkSummary 'B')
+
+                $result = Remove-FogBugzCaseProgress -WorkingDirectory $WorkDir -All
+                $result.RemovedCount | Should -Be 2
+                $result.RemainingCount | Should -Be 0
+
+                @(Get-FogBugzCaseProgress -WorkingDirectory $WorkDir).Count | Should -Be 0
+            }
+        }
+
+        It 'requires case number when remove-all is not specified' {
+            InModuleScope FogBugzSkills -Parameters @{ WorkDir = $script:WorkDir } {
+                param($WorkDir)
+
+                [void](Save-FogBugzCaseProgress -WorkingDirectory $WorkDir -CaseNumber '14630' -Title 'Case A' -WorkSummary 'A')
+                { Remove-FogBugzCaseProgress -WorkingDirectory $WorkDir } | Should -Throw '*CaseNumber is required*'
             }
         }
     }

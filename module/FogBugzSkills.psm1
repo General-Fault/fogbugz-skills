@@ -17,6 +17,9 @@ Set-Alias -Name fbrank -Value Get-FogBugzRankedCase
 Set-Alias -Name fbcase -Value Get-FogBugzCaseDetails
 Set-Alias -Name fbfilter -Value Resolve-FogBugzFilter
 Set-Alias -Name fbselect -Value Select-FogBugzCase
+Set-Alias -Name fbsaveprogress -Value Save-FogBugzCaseProgress
+Set-Alias -Name fbresume -Value Get-FogBugzCaseProgress
+Set-Alias -Name fbclearprogress -Value Remove-FogBugzCaseProgress
 
-Export-ModuleMember -Function Add-FogBugzCaseComment, Connect-FogBugzSession, Find-FogBugzCase, Get-FogBugzCaseDetails, Get-FogBugzCaseScore, Get-FogBugzRankedCase, Initialize-FogBugzSession, New-FogBugzCaseBranch, Resolve-FogBugzFilter, Select-FogBugzCase -Alias fblogin, fbconnect, fbpick, fbcomment, fbscore, fbrank, fbcase, fbfilter, fbselect
+Export-ModuleMember -Function Add-FogBugzCaseComment, Connect-FogBugzSession, Find-FogBugzCase, Get-FogBugzCaseDetails, Get-FogBugzCaseProgress, Get-FogBugzCaseScore, Get-FogBugzRankedCase, Initialize-FogBugzSession, New-FogBugzCaseBranch, Remove-FogBugzCaseProgress, Resolve-FogBugzFilter, Save-FogBugzCaseProgress, Select-FogBugzCase -Alias fblogin, fbconnect, fbpick, fbcomment, fbscore, fbrank, fbcase, fbfilter, fbselect, fbsaveprogress, fbresume, fbclearprogress
 

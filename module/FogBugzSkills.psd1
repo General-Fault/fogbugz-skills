@@ -11,11 +11,14 @@
         'Connect-FogBugzSession'
         'Find-FogBugzCase'
         'Get-FogBugzCaseDetails'
+        'Get-FogBugzCaseProgress'
         'Get-FogBugzCaseScore'
         'Get-FogBugzRankedCase'
         'Initialize-FogBugzSession'
         'New-FogBugzCaseBranch'
+        'Remove-FogBugzCaseProgress'
         'Resolve-FogBugzFilter'
+        'Save-FogBugzCaseProgress'
         'Select-FogBugzCase'
     )
     AliasesToExport   = @(
@@ -28,6 +31,9 @@
         'fbrank'
         'fbfilter'
         'fbselect'
+        'fbsaveprogress'
+        'fbresume'
+        'fbclearprogress'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()
