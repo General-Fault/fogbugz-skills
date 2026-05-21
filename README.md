@@ -1,57 +1,181 @@
 # fogbugz-skills
 
-Copilot skills and PowerShell helpers for working with FogBugz in a shared workflow.
+Copilot skills plus a PowerShell module for running a FogBugz case workflow end-to-end with AI assistance.
 
-## What this repo is for
+## Why this project exists
 
-- Find the next FogBugz case to work on.
-- Summarize case-linked changes into concise QA test guidance.
-- Update FogBugz with progress notes and commit context.
+This repository exists to make FogBugz case work predictable inside AI-assisted development:
 
-## Planned layout
+1. Pick a FogBugz case from your queue.
+2. Create a correctly named case branch and start work.
+3. Capture local handoff context before switching away.
+4. Resume quickly in a later agent/session without losing state.
+5. Update the case with testing guidance or progress notes when needed.
 
-- `module/` — PowerShell module with reusable FogBugz helpers.
-- `skills/` — Copilot skill definitions and prompts.
-- `tools/` — bootstrap and support scripts.
+The project combines Copilot skills with a PowerShell module so humans and agents can collaborate with less context loss and less repeated setup.
 
-## Current status
+## Current skills
 
-This repo is still being bootstrapped. The initial governance files are in place, and the first vertical slice is the case picker.
+All skills live under `skills/`:
 
-## Development notes
+- `fogbugz-pick-case` - pick the next case from a named filter using an interactive picker.
+- `fogbugz-create-branch` - create/switch to `cases/<case-number>-<description>`.
+- `fogbugz-handoff-case` - save local handoff progress for the selected case.
+- `fogbugz-resume-case` - restore saved case progress and reload live case context.
+- `fogbugz-clear-case-progress` - remove local saved progress for one case or all cases.
 
-- Use PowerShell for local automation.
-- FogBugz access is expected to use interactive login with cached session tokens.
-- The repo is intended to support shared use across coworkers.
+## AI-assisted workflow
 
-## First slice
+### 1. Pick a case
 
-The first implemented slice is a PowerShell module that can:
+Run `/fogbugz-pick-case` and provide a filter such as **My Saved FogBugz Filter**.
 
-- log in to FogBugz interactively,
-- resolve exact named filters,
-- rank cases with short explanations, and
-- let the user pick a case from the returned list.
+Skill behavior:
 
-Import `module/FogBugzSkills.psd1` to use it locally.
+- select a case from the top 5 of a given filter
+- selected case details are loaded (including comments/events and attachment metadata)
+- selected case context is persisted for follow-up skills and commands
+- if auth/session context is missing, it guides you through login before retrying
 
-## Real-world workflow (current)
+### 2. Create a case branch
 
-1. Run pre-auth once in the working directory:
-   `fblogin` (alias for `Initialize-FogBugzSession`).
-2. Enter tenant URI and credentials at the secure local prompt.
-3. Run case picker:
-   `fbpick "<your filter>" -Interactive`
+Run `/fogbugz-create-branch`.
 
-The tenant context and session token are cached per working directory for later non-interactive module usage.
-When a case is selected interactively, the module now loads case comments/events and attachment metadata into the returned case context.
-You can also load details directly by case number with `Get-FogBugzCaseDetails` / `fbcase 14630`.
-The current selected case is stored per working directory, so `fbcomment` can reuse the last picked or loaded case without retyping the case number.
-Create a case branch from the current selection with `New-FogBugzCaseBranch` once you have a short description slug.
+Skill behavior:
 
-The companion skill scaffolds live at `skills/fogbugz-pick-case/SKILL.md` and `skills/fogbugz-create-branch/SKILL.md`.
+- proposes a branch name in `cases/<case-number>-<description>` format
+- prefers case-title-derived descriptions
+- prevents duplicate branch creation for the same case number
+- creates and switches to the selected branch
 
-Short aliases are available:
+### 3. Save handoff before stopping
+
+Run `/fogbugz-handoff-case`.
+
+Skill behavior:
+
+- saves local handoff progress to `.fogbugz\case-progress.json`
+- infers summary, changes, tests, open questions, and next steps from the conversation context and git diff
+- all handoff information is saved locally (no FogBugz server changes)
+
+### 4. Resume later
+
+Run `/fogbugz-resume-case`.
+
+Skill behavior:
+
+- restores saved local handoff progress from the /fogbugz-handoff-case skill
+- reloads live FogBugz case context for the selected case
+- if multiple saved entries exist, it presents choices so you can pick which case to resume
+
+### 5. Clear stale handoff data (when needed)
+
+Run `/fogbugz-clear-case-progress`.
+
+Skill behavior:
+
+- removes one saved handoff entry or all saved handoff entries
+- reports what was removed and what remains
+- only updates local progress files (no FogBugz server changes)
+
+## Running the commands yourself
+
+If you prefer direct module usage, import the module and run cmdlets explicitly:
+
+```powershell
+Import-Module .\module\FogBugzSkills.psd1 -Force
+```
+
+### Initialize-FogBugzSession
+
+Initializes FogBugz auth/session context for a working directory.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-BaseUri <string>` | No | FogBugz tenant base URI to connect to. |
+| `-Credential <pscredential>` | No | Credentials for authentication. If omitted, interactive prompting is used. |
+| `-WorkingDirectory <string>` | No | Directory key used for storing/retrieving local session context. |
+
+### Connect-FogBugzSession
+
+Loads an existing session context and returns a usable session object, or prompts when requested.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-BaseUri <string>` | No | FogBugz tenant base URI override. |
+| `-PromptForCredentials` | No | Forces an interactive credential prompt when cached credentials are missing or invalid. |
+| `-WorkingDirectory <string>` | No | Directory key used to locate stored local session context. |
+
+### Find-FogBugzCase
+
+Finds and ranks candidate cases from a saved filter, with optional interactive selection.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-BaseUri <string>` | No | FogBugz tenant base URI override for the query. |
+| `-FilterName <string>` | No | Saved-filter name (exact or partial) to resolve before searching cases. |
+| `-Interactive` | No | Opens the interactive picker so you can choose from ranked cases. |
+| `-Top <int>` | No | Maximum number of ranked cases to return before selection. |
+| `-WorkingDirectory <string>` | No | Directory key for local auth/selected-case context. |
+
+### Get-FogBugzCaseDetails
+
+Loads full case details, including case feed/context artifacts.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-CaseNumber <string>` | Yes | FogBugz case ID to retrieve. |
+| `-Session <psobject>` | No | Existing session object to reuse. If omitted, stored session context is used. |
+| `-WorkingDirectory <string>` | No | Directory key for loading stored session context. |
+
+### Add-FogBugzCaseComment
+
+Posts a comment to a FogBugz case, with optional attachments.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-Comment <string>` | Yes | Comment text to post. |
+| `-CaseNumber <string>` | No | Target case ID. If omitted, the currently selected local case is used. |
+| `-AttachmentPath <string[]>` | No | One or more file or directory paths to attach to the comment. |
+| `-Session <psobject>` | No | Pre-resolved session object. If omitted, stored session context is used. |
+| `-WorkingDirectory <string>` | No | Directory key for local auth/selected-case context. |
+
+### Get-FogBugzCaseScore
+
+Scores a single case for ranking and returns explanation metadata.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-Case <psobject>` | Yes | Case object to score (for rank priority and explanation). |
+
+### Get-FogBugzRankedCase
+
+Ranks multiple cases by score and returns sorted results.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-Case <object[]>` | Yes | Array of case objects to score and sort from highest to lowest priority. |
+
+### Resolve-FogBugzFilter
+
+Resolves a user-supplied filter name against available FogBugz saved filters.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-FilterName <string>` | Yes | Filter name (exact or partial) to resolve. |
+| `-Filter <object[]>` | Yes | Candidate filter objects to match against `-FilterName`. |
+
+### Select-FogBugzCase
+
+Performs explicit case selection from ranked candidates.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-Case <object[]>` | Yes | Candidate cases to display and select from. |
+| `-SelectTopOnEmpty` | No | If enabled, pressing Enter on empty input selects the top-ranked case. |
+
+## Useful module aliases
+
 - `fblogin` -> `Initialize-FogBugzSession`
 - `fbconnect` -> `Connect-FogBugzSession`
 - `fbpick` -> `Find-FogBugzCase`
@@ -62,6 +186,6 @@ Short aliases are available:
 - `fbfilter` -> `Resolve-FogBugzFilter`
 - `fbselect` -> `Select-FogBugzCase`
 
-## Governance
+## Notes for contributors
 
-Repository rules for Copilot agents live in `.github/copilot-instructions.md`.
+Repository automation and agent rules are in `.github/copilot-instructions.md`.
