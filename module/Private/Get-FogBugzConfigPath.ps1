@@ -4,14 +4,11 @@ function Get-FogBugzConfigPath {
         [string]$WorkingDirectory
     )
 
-    $dir = [IO.Path]::GetFullPath($WorkingDirectory)
-    while ($dir) {
-        $candidate = Join-Path $dir '.fogbugz'
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
-        $parent = Split-Path -Parent $dir
-        if ($parent -eq $dir) { break }
-        $dir = $parent
-    }
-    $null
+    $storagePath = Get-FogBugzStoragePath -WorkingDirectory $WorkingDirectory
+    if (-not $storagePath) { return $null }
+
+    $path = Join-Path $storagePath 'config.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    $path
 }
 

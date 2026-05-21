@@ -582,15 +582,42 @@ Describe 'FogBugzSkills' {
         }
     }
 
-    Context 'Get-FogBugzConfigPath' {
-        It 'constructs the correct config.json path' {
-            InModuleScope FogBugzSkills {
-                # Verify the function joins paths correctly by checking against a known directory
-                $testDir = 'C:\users\test'
-                $result = Get-FogBugzConfigPath -WorkingDirectory $testDir
-                # The function should return $null since this directory doesn't exist
-                # but this test verifies it doesn't error
-                $result | Should -BeNullOrEmpty
+    Context 'Config directory layout' {
+        BeforeEach {
+            $script:TempRoot = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
+            $script:WorkDir = Join-Path $script:TempRoot 'scriptcenter'
+            New-Item -ItemType Directory -Path $script:WorkDir -Force | Out-Null
+            $env:FOGBUGZ_SELECTED_CASE = $null
+        }
+
+        AfterEach {
+            $env:FOGBUGZ_SELECTED_CASE = $null
+            if (Test-Path -LiteralPath $script:TempRoot) {
+                Remove-Item -LiteralPath $script:TempRoot -Recurse -Force
+            }
+        }
+
+        It 'stores tenant config in .fogbugz\config.json' {
+            InModuleScope FogBugzSkills -Parameters @{ WorkDir = $script:WorkDir } {
+                param($WorkDir)
+
+                Mock Invoke-FogBugzApi {
+                    [pscustomobject]@{ Token = 'token-123' }
+                }
+                Mock Set-FogBugzCredential { }
+
+                $cred = [pscredential]::new(
+                    'dummy.user@example.com',
+                    (ConvertTo-SecureString -String 'DummyPassword123!' -AsPlainText -Force)
+                )
+
+                [void](Initialize-FogBugzSession -BaseUri 'https://yourtenant.fogbugz.com' -WorkingDirectory $WorkDir -Credential $cred)
+
+                $configPath = Join-Path $WorkDir '.fogbugz\config.json'
+                Test-Path -LiteralPath $configPath -PathType Leaf | Should -BeTrue
+
+                $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+                $config.BaseUri | Should -Be 'https://yourtenant.fogbugz.com'
             }
         }
     }

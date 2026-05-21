@@ -7,7 +7,8 @@ function Write-FogBugzConfig {
         [string]$BaseUri
     )
 
-    $path = Join-Path ([IO.Path]::GetFullPath($WorkingDirectory)) '.fogbugz'
+    $storagePath = Get-FogBugzStoragePath -WorkingDirectory $WorkingDirectory -CreateIfMissing
+    $path = Join-Path $storagePath 'config.json'
     @{ BaseUri = $BaseUri.Trim() } | ConvertTo-Json | Set-Content -LiteralPath $path -Encoding UTF8
 }
 
