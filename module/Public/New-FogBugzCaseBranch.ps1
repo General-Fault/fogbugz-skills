@@ -35,9 +35,9 @@ function New-FogBugzCaseBranch {
 
     $currentBranch = [string](& git branch --show-current)
     $matchingBranches = @(
-        & git branch --list "cases/$CaseNumber-*"
-        | ForEach-Object { $_.Trim().TrimStart('*').Trim() }
-        | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        & git branch --list "cases/$CaseNumber-*" |
+            ForEach-Object { $_.Trim().TrimStart('*').Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
     )
     if (-not [string]::IsNullOrWhiteSpace($currentBranch) -and $currentBranch -like "cases/$CaseNumber-*") {
         $matchingBranches += $currentBranch
@@ -63,4 +63,3 @@ function New-FogBugzCaseBranch {
         BranchName  = $branchName
     }
 }
-

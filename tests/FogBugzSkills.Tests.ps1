@@ -290,6 +290,29 @@ Describe 'FogBugzSkills' {
                 }
             }
         }
+
+        It 'imports successfully in Windows PowerShell 5' {
+            $windowsPowerShell = Get-Command -Name powershell.exe -ErrorAction SilentlyContinue
+            if (-not $windowsPowerShell) {
+                Set-ItResult -Skipped -Because 'Windows PowerShell is unavailable.'
+                return
+            }
+
+            $modulePath = (Resolve-Path (Join-Path $PSScriptRoot '..\module\FogBugzSkills.psd1')).Path
+            $scriptPath = Join-Path $script:BranchTempRoot 'import-module.ps1'
+            $scriptContent = @'
+$ErrorActionPreference = 'Stop'
+Import-Module -Name '__MODULE_PATH__' -Force
+'IMPORTED'
+'@.Replace('__MODULE_PATH__', $modulePath.Replace("'", "''"))
+
+            Set-Content -LiteralPath $scriptPath -Value $scriptContent -Encoding UTF8
+
+            $output = & $windowsPowerShell.Source -NoProfile -File $scriptPath 2>&1 | Out-String
+
+            $LASTEXITCODE | Should -Be 0
+            $output | Should -Match 'IMPORTED'
+        }
     }
 
     Context 'Auth bootstrap workflow' {
