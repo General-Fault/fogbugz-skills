@@ -134,6 +134,99 @@ Describe 'FogBugzSkills' {
                 (Select-FogBugzCase -Case $cases -SelectTopOnEmpty).Id | Should -Be 10
             }
         }
+
+        It 'does not show more... when cases fit within one page' {
+            InModuleScope FogBugzSkills {
+                $hostOutput = [System.Collections.Generic.List[string]]::new()
+                Mock Write-Host { $hostOutput.Add($Object) }
+                Mock Read-Host { '1' }
+
+                $cases = @(
+                    [pscustomobject]@{ Id = 1; Title = 'A'; Score = 9; Explanation = 'x' }
+                    [pscustomobject]@{ Id = 2; Title = 'B'; Score = 8; Explanation = 'x' }
+                    [pscustomobject]@{ Id = 3; Title = 'C'; Score = 7; Explanation = 'x' }
+                )
+
+                Select-FogBugzCase -Case $cases -PageSize 5
+                $hostOutput | Where-Object { $_ -match 'more\.\.\.' } | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'shows more... when cases exceed one page' {
+            InModuleScope FogBugzSkills {
+                $hostOutput = [System.Collections.Generic.List[string]]::new()
+                Mock Write-Host { $hostOutput.Add($Object) }
+                Mock Read-Host { '1' }
+
+                $cases = 1..6 | ForEach-Object {
+                    [pscustomobject]@{ Id = $_; Title = "Case $_"; Score = (10 - $_); Explanation = 'x' }
+                }
+
+                Select-FogBugzCase -Case $cases -PageSize 5
+                $hostOutput | Where-Object { $_ -match 'more\.\.\.' } | Should -Not -BeNullOrEmpty
+            }
+        }
+
+        It 'advances to next page when more... is selected' {
+            InModuleScope FogBugzSkills {
+                $script:callCount = 0
+                Mock Read-Host {
+                    $script:callCount++
+                    if ($script:callCount -eq 1) { return '6' }
+                    return '1'
+                }
+
+                $cases = 1..8 | ForEach-Object {
+                    [pscustomobject]@{ Id = $_; Title = "Case $_"; Score = (10 - $_); Explanation = 'x' }
+                }
+
+                $result = Select-FogBugzCase -Case $cases -PageSize 5
+                $result.Id | Should -Be 6
+            }
+        }
+
+        It 'does not show more... on the last page' {
+            InModuleScope FogBugzSkills {
+                $script:pageOutputs = [System.Collections.Generic.List[string[]]]::new()
+                $script:currentPageLines = [System.Collections.Generic.List[string]]::new()
+                $script:callCount = 0
+
+                Mock Write-Host { $script:currentPageLines.Add($Object) }
+                Mock Read-Host {
+                    $script:callCount++
+                    $script:pageOutputs.Add($script:currentPageLines.ToArray())
+                    $script:currentPageLines.Clear()
+                    if ($script:callCount -eq 1) { return '6' }
+                    return '1'
+                }
+
+                $cases = 1..8 | ForEach-Object {
+                    [pscustomobject]@{ Id = $_; Title = "Case $_"; Score = (10 - $_); Explanation = 'x' }
+                }
+
+                Select-FogBugzCase -Case $cases -PageSize 5
+                $lastPage = $script:pageOutputs[1]
+                $lastPage | Where-Object { $_ -match 'more\.\.\.' } | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'can select a case from a non-first page' {
+            InModuleScope FogBugzSkills {
+                $script:callCount = 0
+                Mock Read-Host {
+                    $script:callCount++
+                    if ($script:callCount -eq 1) { return '6' }
+                    return '2'
+                }
+
+                $cases = 1..8 | ForEach-Object {
+                    [pscustomobject]@{ Id = $_; Title = "Case $_"; Score = (10 - $_); Explanation = 'x' }
+                }
+
+                $result = Select-FogBugzCase -Case $cases -PageSize 5
+                $result.Id | Should -Be 7
+            }
+        }
     }
 
     Context 'New-FogBugzCaseBranch' {

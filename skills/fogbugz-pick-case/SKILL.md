@@ -37,6 +37,9 @@ Use this skill to select the next FogBugz case for the active work queue.
 - If no cases match, say that explicitly and suggest validating filter membership in FogBugz.
 - After case selection, use loaded comment and attachment context when summarizing the case.
 - The selected case is persisted per working directory and can be reused by `fbcomment`.
+- The picker shows the top 5 ranked cases. If more cases exist, a numbered `more...` option
+  appears (e.g. `6. more...`). Selecting it advances to the next page of 5. The `more...`
+  option is not shown when all remaining cases fit on the current page.
 - If you must ask for a choice in chat, each option must include details in this format:
   `<case id> — <title> (score <n>; <explanation>)`
 - Never present numeric-only options like `1`, `2`, `3` without case details.
