@@ -8,6 +8,8 @@ function Find-FogBugzCase {
 
         [int]$Top = 5,
 
+        [int]$PageSize = 5,
+
         [switch]$Interactive,
 
         [string]$WorkingDirectory = (Get-Location).Path
@@ -18,13 +20,13 @@ function Find-FogBugzCase {
     if ($cases.Count -eq 0) {
         throw 'No FogBugz cases matched the selected criteria.'
     }
-    $ranked = Get-FogBugzRankedCase -Case $cases | Select-Object -First $Top
+    $ranked = Get-FogBugzRankedCase -Case $cases
 
     if ($Interactive) {
-        $selected = Select-FogBugzCase -Case $ranked
+        $selected = Select-FogBugzCase -Case $ranked -PageSize $PageSize
         return Get-FogBugzCaseDetails -Session $session -CaseNumber ([string]$selected.Id)
     }
 
-    $ranked
+    $ranked | Select-Object -First $Top
 }
 
