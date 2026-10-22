@@ -822,6 +822,39 @@ Import-Module -Name '__MODULE_PATH__' -Force
                 $config.BaseUri | Should -Be 'https://yourtenant.fogbugz.com'
             }
         }
+
+        It 'resolves a symlinked ancestor to its real target instead of its textual parent' {
+            InModuleScope FogBugzSkills -Parameters @{ TempRoot = $script:TempRoot } {
+                param($TempRoot)
+
+                # Simulates "C:\Users\cbarn\source" being a junction to another
+                # drive: "$home\link" is the link, "$driveRoot" is its real
+                # target. A naive ancestor walk that treats the link path as
+                # plain text would, after not finding .fogbugz at or below the
+                # link, step up to the link's own parent ($home) and wrongly
+                # adopt an unrelated .fogbugz living there. The correct walk
+                # must instead continue from the link's real target's parent.
+                $home = Join-Path $TempRoot 'home'
+                $driveContainer = Join-Path $TempRoot 'driveContainer'
+                $driveRoot = Join-Path $driveContainer 'drive'
+                $realProject = Join-Path $driveRoot 'repos\Asteres\ScriptCenter\working'
+                $correctFogBugz = Join-Path $driveContainer '.fogbugz'
+                $wrongFogBugz = Join-Path $home '.fogbugz'
+
+                New-Item -ItemType Directory -Path $realProject -Force | Out-Null
+                New-Item -ItemType Directory -Path $correctFogBugz -Force | Out-Null
+                New-Item -ItemType Directory -Path $wrongFogBugz -Force | Out-Null
+
+                $link = Join-Path $home 'link'
+                New-Item -ItemType Junction -Path $link -Target $driveRoot | Out-Null
+
+                $linkedWorkingDirectory = Join-Path $link 'repos\Asteres\ScriptCenter\working'
+
+                $result = Get-FogBugzStoragePath -WorkingDirectory $linkedWorkingDirectory
+
+                $result | Should -Be $correctFogBugz
+            }
+        }
     }
 
     Context 'Case progress workflow' {
