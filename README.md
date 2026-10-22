@@ -19,6 +19,7 @@ The project combines Copilot skills with a PowerShell module so humans and agent
 All skills live under `skills/`:
 
 - `fogbugz-pick-case` - pick the next case from a named filter using an interactive picker.
+- `fogbugz-create-case` - create a new FogBugz case with title, description, and optional project/area/category/priority/assignment.
 - `fogbugz-create-branch` - create/switch to `cases/<case-number>-<description>`.
 - `fogbugz-handoff-case` - save local handoff progress for the selected case.
 - `fogbugz-resume-case` - restore saved case progress and reload live case context.
@@ -37,7 +38,17 @@ Skill behavior:
 - selected case context is persisted for follow-up skills and commands
 - if auth/session context is missing, it guides you through login before retrying
 
-### 2. Create a case branch
+### 2. Create a new case
+
+Run `/fogbugz-create-case`.
+
+Skill behavior:
+
+- creates a new FogBugz case from a title and description, with optional project/area/category/priority/assignment/tags
+- loads full case details after creation and persists the new case as the selected case
+- confirms inferred/summarized title or description with you before creating a non-trivial case
+
+### 3. Create a case branch
 
 Run `/fogbugz-create-branch`.
 
@@ -48,7 +59,7 @@ Skill behavior:
 - prevents duplicate branch creation for the same case number
 - creates and switches to the selected branch
 
-### 3. Save handoff before stopping
+### 4. Save handoff before stopping
 
 Run `/fogbugz-handoff-case`.
 
@@ -58,7 +69,7 @@ Skill behavior:
 - infers summary, changes, tests, open questions, and next steps from the conversation context and git diff
 - all handoff information is saved locally (no FogBugz server changes)
 
-### 4. Resume later
+### 5. Resume later
 
 Run `/fogbugz-resume-case`.
 
@@ -68,7 +79,7 @@ Skill behavior:
 - reloads live FogBugz case context for the selected case
 - if multiple saved entries exist, it presents choices so you can pick which case to resume
 
-### 5. Clear stale handoff data (when needed)
+### 6. Clear stale handoff data (when needed)
 
 Run `/fogbugz-clear-case-progress`.
 
@@ -137,6 +148,25 @@ Posts a comment to a FogBugz case, with optional attachments.
 | `-Comment <string>` | Yes | Comment text to post. |
 | `-CaseNumber <string>` | No | Target case ID. If omitted, the currently selected local case is used. |
 | `-AttachmentPath <string[]>` | No | One or more file or directory paths to attach to the comment. |
+| `-Session <psobject>` | No | Pre-resolved session object. If omitted, stored session context is used. |
+| `-WorkingDirectory <string>` | No | Directory key for local auth/selected-case context. |
+
+### New-FogBugzCase
+
+Creates a new FogBugz case, loads its full details, and selects it for the working directory.
+
+| Parameter | Required | Description |
+| --- | --- | --- |
+| `-Title <string>` | Yes | Title of the new case. |
+| `-Description <string>` | No | Initial case description/repro steps (posted as the opening event). |
+| `-Project <string>` | No | FogBugz project name. |
+| `-Area <string>` | No | FogBugz area name within the project. |
+| `-Category <string>` | No | Case category (e.g. `Bug`, `Feature`). |
+| `-Priority <int>` | No | Numeric FogBugz priority ID. |
+| `-AssignTo <string>` | No | Person to assign the case to (name or email). |
+| `-Tags <string[]>` | No | One or more tags to apply. |
+| `-DueDate <datetime>` | No | Due date for the case. |
+| `-AttachmentPath <string[]>` | No | One or more file or directory paths to attach when creating the case. |
 | `-Session <psobject>` | No | Pre-resolved session object. If omitted, stored session context is used. |
 | `-WorkingDirectory <string>` | No | Directory key for local auth/selected-case context. |
 
@@ -226,6 +256,7 @@ Performs explicit case selection from ranked candidates.
 - `fbpick` -> `Find-FogBugzCase`
 - `fbcomment` -> `Add-FogBugzCaseComment`
 - `fbcase` -> `Get-FogBugzCaseDetails`
+- `fbnewcase` -> `New-FogBugzCase`
 - `fbscore` -> `Get-FogBugzCaseScore`
 - `fbrank` -> `Get-FogBugzRankedCase`
 - `fbfilter` -> `Resolve-FogBugzFilter`

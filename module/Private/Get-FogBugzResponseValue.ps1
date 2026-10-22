@@ -17,6 +17,12 @@ function Get-FogBugzResponseValue {
             if ($node.LocalName -ieq $Name) {
                 return $node.InnerText
             }
+
+            foreach ($attribute in $node.Attributes) {
+                if ($attribute.LocalName -ieq $Name) {
+                    return $attribute.Value
+                }
+            }
         }
     }
 
