@@ -15,6 +15,7 @@
         'Get-FogBugzCaseScore'
         'Get-FogBugzRankedCase'
         'Initialize-FogBugzSession'
+        'New-FogBugzCase'
         'New-FogBugzCaseBranch'
         'Remove-FogBugzCaseProgress'
         'Resolve-FogBugzFilter'
@@ -34,6 +35,7 @@
         'fbsaveprogress'
         'fbresume'
         'fbclearprogress'
+        'fbnewcase'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

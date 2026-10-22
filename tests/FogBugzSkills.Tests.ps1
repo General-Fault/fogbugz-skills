@@ -352,6 +352,7 @@ Import-Module -Name '__MODULE_PATH__' -Force
                 'Get-FogBugzCaseScore'
                 'Get-FogBugzRankedCase'
                 'Initialize-FogBugzSession'
+                'New-FogBugzCase'
                 'New-FogBugzCaseBranch'
                 'Remove-FogBugzCaseProgress'
                 'Resolve-FogBugzFilter'
@@ -374,6 +375,7 @@ Import-Module -Name '__MODULE_PATH__' -Force
                 fbpick          = 'Find-FogBugzCase'
                 fbcomment       = 'Add-FogBugzCaseComment'
                 fbcase          = 'Get-FogBugzCaseDetails'
+                fbnewcase       = 'New-FogBugzCase'
                 fbresume        = 'Get-FogBugzCaseProgress'
                 fbscore         = 'Get-FogBugzCaseScore'
                 fbrank          = 'Get-FogBugzRankedCase'
@@ -700,6 +702,84 @@ Import-Module -Name '__MODULE_PATH__' -Force
                 $missing = Join-Path $WorkDir 'missing.log'
                 { Add-FogBugzCaseComment 'Selected case note' -Session $session -WorkingDirectory $WorkDir -AttachmentPath @($missing) -Confirm:$false } | Should -Throw
                 Should -Invoke Invoke-FogBugzMultipartApi -Times 0
+            }
+        }
+    }
+
+    Context 'New-FogBugzCase' {
+        BeforeEach {
+            $script:TempRoot = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
+            $script:WorkDir = Join-Path $script:TempRoot 'scriptcenter'
+            New-Item -ItemType Directory -Path $script:WorkDir -Force | Out-Null
+            $env:FOGBUGZ_SELECTED_CASE = $null
+        }
+
+        AfterEach {
+            $env:FOGBUGZ_SELECTED_CASE = $null
+            if (Test-Path -LiteralPath $script:TempRoot) {
+                Remove-Item -LiteralPath $script:TempRoot -Recurse -Force
+            }
+        }
+
+        It 'creates a case with the supplied fields and selects it' {
+            InModuleScope FogBugzSkills -Parameters @{ WorkDir = $script:WorkDir } {
+                param($WorkDir)
+
+                $session = [pscustomobject]@{ BaseUri = 'https://yourtenant.fogbugz.com'; Token = 'token-123' }
+
+                Mock Invoke-FogBugzApi -ParameterFilter { $Command -eq 'new' } {
+                    [xml]'<response><case ixBug="14631" operations="edit,assign"></case></response>'
+                }
+                Mock Invoke-FogBugzApi -ParameterFilter { $Command -eq 'search' } {
+                    [xml]'<response><cases><case ixBug="14631"><ixBug>14631</ixBug><sTitle>New login bug</sTitle><ixPriority>2</ixPriority><sStatus>Active</sStatus><fBlocked>false</fBlocked></case></cases></response>'
+                }
+
+                $result = New-FogBugzCase -Title 'New login bug' -Description 'Users cannot log in.' -Project 'Portal' -Area 'Authentication' -Category 'Bug' -Priority 2 -AssignTo 'dummy.user@example.com' -Tags @('login', 'urgent') -Session $session -WorkingDirectory $WorkDir -Confirm:$false
+
+                $result.Id | Should -Be '14631'
+                $result.Title | Should -Be 'New login bug'
+
+                Should -Invoke Invoke-FogBugzApi -ParameterFilter {
+                    $Command -eq 'new' -and
+                    $Parameter.sTitle -eq 'New login bug' -and
+                    $Parameter.sEvent -eq 'Users cannot log in.' -and
+                    $Parameter.sProject -eq 'Portal' -and
+                    $Parameter.sArea -eq 'Authentication' -and
+                    $Parameter.sCategory -eq 'Bug' -and
+                    $Parameter.ixPriority -eq '2' -and
+                    $Parameter.sPersonAssignedTo -eq 'dummy.user@example.com' -and
+                    $Parameter.sTags -eq 'login,urgent'
+                } -Times 1
+
+                (Get-FogBugzSelectedCase -WorkingDirectory $WorkDir).Id | Should -Be '14631'
+            }
+        }
+
+        It 'throws when FogBugz does not return a case number' {
+            InModuleScope FogBugzSkills -Parameters @{ WorkDir = $script:WorkDir } {
+                param($WorkDir)
+
+                $session = [pscustomobject]@{ BaseUri = 'https://yourtenant.fogbugz.com'; Token = 'token-123' }
+
+                Mock Invoke-FogBugzApi -ParameterFilter { $Command -eq 'new' } {
+                    [xml]'<response></response>'
+                }
+
+                { New-FogBugzCase -Title 'Broken case' -Session $session -WorkingDirectory $WorkDir -Confirm:$false } | Should -Throw '*did not return a case number*'
+            }
+        }
+
+        It 'does not call the API when -WhatIf is specified' {
+            InModuleScope FogBugzSkills -Parameters @{ WorkDir = $script:WorkDir } {
+                param($WorkDir)
+
+                $session = [pscustomobject]@{ BaseUri = 'https://yourtenant.fogbugz.com'; Token = 'token-123' }
+
+                Mock Invoke-FogBugzApi { }
+
+                New-FogBugzCase -Title 'Should not be created' -Session $session -WorkingDirectory $WorkDir -WhatIf
+
+                Should -Invoke Invoke-FogBugzApi -Times 0
             }
         }
     }
